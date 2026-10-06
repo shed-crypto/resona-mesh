@@ -82,9 +82,10 @@ Developed as a Bachelor's Thesis in Software Engineering at the Faculty of Infor
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/<username>/resonamesh.git
-   cd resonamesh
+   git clone https://github.com/shed-crypto/resona-mesh.git
+   cd resona-mesh
    ```
+
 
 2. Initialize your local configuration:
    ```bash
@@ -163,11 +164,13 @@ cd web && npm run build
 
 ---
 
-## Engineering Standards
+## Contributing
 
-- **Commit Format**: Strict [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, etc.).
-- **Code Style**: Idiomatic Go adhering to *Effective Go* and Google Go Style Guide. Zero conversational or AI-tell comments.
-- **Branch Strategy**: `main` for release milestones, `develop` for integration, `feature/<name>` for isolated capability development.
+Contributions and pull requests are welcome. When contributing:
+- Ensure all commit messages adhere to [Conventional Commits](https://www.conventionalcommits.org/).
+- Verify that code formatting adheres to standard `gofmt` and passes `go vet ./...`.
+- Ensure all existing and new unit tests pass with `go test ./...`.
+
 
 ---
 
