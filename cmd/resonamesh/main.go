@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/shed-crypto/resona-mesh/internal/config"
+	"resonamesh/internal/config"
 )
 
 const (

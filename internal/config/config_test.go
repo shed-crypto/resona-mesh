@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/shed-crypto/resona-mesh/internal/config"
-	"github.com/shed-crypto/resona-mesh/pkg/protocol"
+	"resonamesh/internal/config"
+	"resonamesh/pkg/protocol"
 )
 
 func TestDefaultConfig(t *testing.T) {
