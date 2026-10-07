@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"resonamesh/pkg/crypto"
@@ -120,3 +122,68 @@ func TestHashContent(t *testing.T) {
 		t.Fatalf("expected 64-character SHA-256 hex string, got %d", len(contentID1))
 	}
 }
+
+func TestPrivateKeyHexEncoding(t *testing.T) {
+	_, priv, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate key pair: %v", err)
+	}
+
+	hexPriv := crypto.PrivateKeyToHex(priv)
+	decoded, err := crypto.HexToPrivateKey(hexPriv)
+	if err != nil {
+		t.Fatalf("failed to decode valid hex private key: %v", err)
+	}
+
+	if !bytes.Equal(priv, decoded) {
+		t.Fatal("decoded private key does not match original bytes")
+	}
+
+	// Invalid hex test
+	_, err = crypto.HexToPrivateKey("invalid-hex-string")
+	if err == nil {
+		t.Fatal("expected error for invalid hex string")
+	}
+
+	// Invalid length test
+	shortHex := hex.EncodeToString([]byte("short-key"))
+	_, err = crypto.HexToPrivateKey(shortHex)
+	if err == nil {
+		t.Fatal("expected error for incorrect key length")
+	}
+}
+
+func TestLoadOrCreatePrivateKey(t *testing.T) {
+	tempDir := t.TempDir()
+	keyPath := filepath.Join(tempDir, "sub", "test_node.key")
+
+	// First call: should generate and save key
+	priv1, err := crypto.LoadOrCreatePrivateKey(keyPath)
+	if err != nil {
+		t.Fatalf("failed to create new private key: %v", err)
+	}
+	if len(priv1) != ed25519.PrivateKeySize {
+		t.Fatalf("expected key length %d, got %d", ed25519.PrivateKeySize, len(priv1))
+	}
+
+	// Second call: should load existing key
+	priv2, err := crypto.LoadOrCreatePrivateKey(keyPath)
+	if err != nil {
+		t.Fatalf("failed to load existing private key: %v", err)
+	}
+
+	if !bytes.Equal(priv1, priv2) {
+		t.Fatal("loaded private key does not match previously generated key")
+	}
+
+	// Test corrupted key file
+	corruptPath := filepath.Join(tempDir, "corrupt.key")
+	if err := os.WriteFile(corruptPath, []byte("bad-hex-data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = crypto.LoadOrCreatePrivateKey(corruptPath)
+	if err == nil {
+		t.Fatal("expected error when loading corrupted key file")
+	}
+}
+
