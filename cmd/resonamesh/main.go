@@ -2,14 +2,22 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"resonamesh/internal/api"
+	"resonamesh/internal/catalog"
 	"resonamesh/internal/config"
+	"resonamesh/internal/importer"
+	"resonamesh/internal/player"
+	"resonamesh/internal/storage"
+	"resonamesh/pkg/crypto"
 )
 
 const (
@@ -61,17 +69,63 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("ResonaMesh node initialized successfully. Awaiting shutdown signal...")
+	// 1. Load or generate persistent node cryptographic identity
+	keyPath := filepath.Join(cfg.DataDir, "node_key.ed25519")
+	privKey, err := crypto.LoadOrCreatePrivateKey(keyPath)
+	if err != nil {
+		slog.Error("Failed to initialize node identity key", "path", keyPath, "error", err)
+		os.Exit(1)
+	}
+	pubKey := privKey.Public().(ed25519.PublicKey)
+	slog.Info("Node identity initialized", "pubkey", crypto.PublicKeyToHex(pubKey))
 
-	// Block until interrupt signal received
-	<-ctx.Done()
+	// 2. Open SQLite database with automatic migrations
+	dbPath := filepath.Join(cfg.DataDir, "catalog.db")
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		slog.Error("Failed to initialize SQLite database", "path", dbPath, "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
 
-	slog.Info("Shutdown signal received. Commencing graceful teardown...")
+	// 3. Initialize content-addressed sharded blockstore
+	bs, err := storage.NewBlockStore(cfg.DataDir)
+	if err != nil {
+		slog.Error("Failed to initialize blockstore", "path", cfg.DataDir, "error", err)
+		os.Exit(1)
+	}
+
+	// 4. Instantiate domain services
+	cat := catalog.New(db, bs)
+	imp := importer.NewImporter(bs, db)
+	str := player.NewStreamer(cat, bs)
+
+	// 5. Initialize and launch HTTP REST & streaming server
+	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
+	serverErrors := make(chan error, 1)
+
+	go func() {
+		if err := apiServer.Start(); err != nil {
+			serverErrors <- err
+		}
+	}()
+
+	slog.Info("ResonaMesh node running. Awaiting shutdown signal...", "http", cfg.HTTPAddr)
+
+	select {
+	case err := <-serverErrors:
+		slog.Error("HTTP API server failed", "error", err)
+	case <-ctx.Done():
+		slog.Info("Shutdown signal received. Commencing graceful teardown...")
+	}
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Teardown steps will cleanly flush SQLite WAL and disconnect libp2p streams
-	_ = shutdownCtx
+	if err := apiServer.Shutdown(shutdownCtx); err != nil {
+		slog.Error("HTTP server shutdown error", "error", err)
+	}
 
 	slog.Info("ResonaMesh node shutdown completed cleanly.")
 }
+
