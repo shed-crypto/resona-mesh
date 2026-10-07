@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -434,5 +435,33 @@ func TestAPIServerLifecycle(t *testing.T) {
 		t.Fatalf("server start returned unexpected error: %v", err)
 	}
 }
+
+func TestAPIEmbeddedFrontend(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("failed GET /: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for root embedded frontend, got %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+
+	bodyStr := string(body)
+	if !strings.Contains(bodyStr, "ResonaMesh") {
+		t.Fatalf("expected HTML body to contain ResonaMesh title, got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "id=\"root\"") {
+		t.Fatalf("expected HTML body to contain root element, got: %s", bodyStr)
+	}
+}
+
 
 
