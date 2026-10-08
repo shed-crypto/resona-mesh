@@ -6,6 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -79,3 +82,52 @@ func HexToPublicKey(hexStr string) (ed25519.PublicKey, error) {
 	}
 	return ed25519.PublicKey(bytes), nil
 }
+
+func PrivateKeyToHex(priv ed25519.PrivateKey) string {
+	return hex.EncodeToString(priv)
+}
+
+func HexToPrivateKey(hexStr string) (ed25519.PrivateKey, error) {
+	bytes, err := hex.DecodeString(hexStr)
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes) != ed25519.PrivateKeySize {
+		return nil, ErrInvalidKeyLength
+	}
+	return ed25519.PrivateKey(bytes), nil
+}
+
+func LoadOrCreatePrivateKey(filePath string) (ed25519.PrivateKey, error) {
+	if data, err := os.ReadFile(filePath); err == nil {
+		content := strings.TrimSpace(string(data))
+		priv, err := HexToPrivateKey(content)
+		if err == nil {
+			return priv, nil
+		}
+		if len(data) == ed25519.PrivateKeySize {
+			return ed25519.PrivateKey(data), nil
+		}
+		return nil, fmt.Errorf("crypto: invalid key file contents at %s: %w", filePath, err)
+	}
+
+	dir := filepath.Dir(filePath)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return nil, fmt.Errorf("crypto: failed to create key directory: %w", err)
+		}
+	}
+
+	_, priv, err := GenerateKeyPair()
+	if err != nil {
+		return nil, fmt.Errorf("crypto: failed to generate key pair: %w", err)
+	}
+
+	hexKey := PrivateKeyToHex(priv)
+	if err := os.WriteFile(filePath, []byte(hexKey), 0600); err != nil {
+		return nil, fmt.Errorf("crypto: failed to save private key: %w", err)
+	}
+
+	return priv, nil
+}
+
