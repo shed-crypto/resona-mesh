@@ -12,7 +12,6 @@ vendor/
 
 # === Node / Web ===
 web/node_modules/
-web/dist/
 web/.vite/
 web/.cache/
 .npm
