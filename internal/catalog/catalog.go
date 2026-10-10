@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"resonamesh/internal/storage"
 	"resonamesh/pkg/protocol"
@@ -274,6 +275,21 @@ func (c *Catalog) SetPinned(ctx context.Context, contentID string, pinned bool) 
 	rowsAffected, err := res.RowsAffected()
 	if err != nil || rowsAffected == 0 {
 		return ErrTrackNotFound
+	}
+	return nil
+}
+
+// MarkBlockStored marks a block as physically present in local storage.
+func (c *Catalog) MarkBlockStored(ctx context.Context, contentID string, blockIndex int, sizeBytes int) error {
+	now := time.Now().Unix()
+	_, err := c.db.Raw().ExecContext(ctx, `
+		UPDATE blocks 
+		SET is_stored = 1, size_bytes = ?, last_accessed_at = ? 
+		WHERE content_id = ? AND block_index = ?`,
+		sizeBytes, now, contentID, blockIndex,
+	)
+	if err != nil {
+		return fmt.Errorf("catalog: failed to mark block as stored: %w", err)
 	}
 	return nil
 }

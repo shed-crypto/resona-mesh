@@ -19,6 +19,7 @@ import (
 	"resonamesh/internal/catalog"
 	"resonamesh/internal/config"
 	"resonamesh/internal/importer"
+	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
 	"resonamesh/pkg/crypto"
@@ -460,6 +461,71 @@ func TestAPIEmbeddedFrontend(t *testing.T) {
 	}
 	if !strings.Contains(bodyStr, "id=\"root\"") {
 		t.Fatalf("expected HTML body to contain root element, got: %s", bodyStr)
+	}
+}
+
+func TestAPIPeersEndpoint(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := storage.Open(filepath.Join(tempDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	bs, _ := storage.NewBlockStore(tempDir)
+	cat := catalog.New(db, bs)
+	imp := importer.NewImporter(bs, db)
+	str := player.NewStreamer(cat, bs)
+	_, priv, _ := crypto.GenerateKeyPair()
+
+	cfg := &config.Config{
+		HTTPAddr:          "127.0.0.1:0",
+		P2PPort:           4001,
+		DataDir:           tempDir,
+		StorageQuotaBytes: 10 * 1024 * 1024,
+	}
+
+	server := api.NewServer(cfg, cat, imp, str, priv)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	// 1. Initial empty peers
+	resp, err := http.Get(ts.URL + "/api/v1/peers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/v1/peers, got %d", resp.StatusCode)
+	}
+
+	var data struct {
+		Peers []map[string]interface{} `json:"peers"`
+		Total int                      `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Total != 0 {
+		t.Fatalf("expected 0 initial peers, got %d", data.Total)
+	}
+
+	// 2. Set peer tracker
+	tracker := p2p.NewPeerTracker()
+	server.SetPeerTracker(tracker)
+
+	resp2, err := http.Get(ts.URL + "/api/v1/peers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	if err := json.NewDecoder(resp2.Body).Decode(&data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Total != 0 {
+		t.Fatalf("expected 0 tracked peers, got %d", data.Total)
 	}
 }
 
