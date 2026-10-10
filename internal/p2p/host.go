@@ -1,0 +1,113 @@
+package p2p
+
+import (
+	"context"
+	"crypto/ed25519"
+	"errors"
+	"fmt"
+	"log/slog"
+
+	"github.com/libp2p/go-libp2p"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/security/noise"
+	libp2ptcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	"github.com/multiformats/go-multiaddr"
+)
+
+var (
+	ErrNilPrivateKey = errors.New("p2p: private key is required")
+	ErrEmptyListenAddr = errors.New("p2p: listen address cannot be empty")
+)
+
+// HostConfig holds networking configuration for the libp2p host.
+type HostConfig struct {
+	ListenAddr   string
+	PrivateKey   ed25519.PrivateKey
+	DisableRelay bool
+}
+
+// Host wraps the libp2p Host instance providing lifecycle and identity operations.
+type Host struct {
+	raw host.Host
+}
+
+// NewHost creates and initializes a libp2p host bound to the node identity key.
+func NewHost(cfg HostConfig) (*Host, error) {
+	if len(cfg.PrivateKey) == 0 {
+		return nil, ErrNilPrivateKey
+	}
+	if cfg.ListenAddr == "" {
+		return nil, ErrEmptyListenAddr
+	}
+
+	p2pPrivKey, err := libp2pcrypto.UnmarshalEd25519PrivateKey(cfg.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("p2p: failed to unmarshal ed25519 private key: %w", err)
+	}
+
+	opts := []libp2p.Option{
+		libp2p.Identity(p2pPrivKey),
+		libp2p.ListenAddrStrings(cfg.ListenAddr),
+		libp2p.Transport(libp2ptcp.NewTCPTransport),
+		libp2p.Security(noise.ID, noise.New),
+	}
+
+	if cfg.DisableRelay {
+		opts = append(opts, libp2p.DisableRelay())
+	}
+
+	rawHost, err := libp2p.New(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("p2p: failed to construct libp2p host: %w", err)
+	}
+
+	slog.Info("Initialized libp2p host",
+		"peer_id", rawHost.ID().String(),
+		"listen_addrs", rawHost.Addrs(),
+	)
+
+	return &Host{raw: rawHost}, nil
+}
+
+// ID returns the libp2p Peer ID derived from the node's public key.
+func (h *Host) ID() peer.ID {
+	return h.raw.ID()
+}
+
+// Addrs returns all listen multiaddresses assigned to this host.
+func (h *Host) Addrs() []multiaddr.Multiaddr {
+	return h.raw.Addrs()
+}
+
+// AddrInfo returns the peer.AddrInfo descriptor of this host.
+func (h *Host) AddrInfo() peer.AddrInfo {
+	return peer.AddrInfo{
+		ID:    h.raw.ID(),
+		Addrs: h.raw.Addrs(),
+	}
+}
+
+// Raw returns the underlying libp2p host.Host.
+func (h *Host) Raw() host.Host {
+	return h.raw
+}
+
+// Connect dials and establishes an authenticated connection to a remote peer.
+func (h *Host) Connect(ctx context.Context, pi peer.AddrInfo) error {
+	if err := h.raw.Connect(ctx, pi); err != nil {
+		return fmt.Errorf("p2p: failed to connect to peer %s: %w", pi.ID, err)
+	}
+	return nil
+}
+
+// ConnectedPeers returns a slice of all currently connected peer IDs.
+func (h *Host) ConnectedPeers() []peer.ID {
+	return h.raw.Network().Peers()
+}
+
+// Close gracefully closes the host, terminating active connections and streams.
+func (h *Host) Close() error {
+	return h.raw.Close()
+}
