@@ -44,9 +44,9 @@ func TestCatalogListAndPagination(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		audioData := bytes.Repeat([]byte{byte(i)}, 100*1024)
 		_, err := imp.Import(ctx, importer.ImportParams{
-			Title:        fmt.Sprintf("Композиція %d", i),
-			Artist:       fmt.Sprintf("Виконавець %d", i),
-			Description:  fmt.Sprintf("Опис треку номер %d", i),
+			Title:        fmt.Sprintf("Audio Track %d", i),
+			Artist:       fmt.Sprintf("Sound Artist %d", i),
+			Description:  fmt.Sprintf("Clean synthesis sample %d", i),
 			DurationMs:   int64(100000 + i*1000),
 			BitrateKbps:  192,
 			LicenseCode:  protocol.LicenseCC0,
@@ -97,14 +97,29 @@ func TestCatalogListAndPagination(t *testing.T) {
 	}
 }
 
-func TestCatalogFTS5UkrainianSearch(t *testing.T) {
+func TestCatalogFTS5MultilingualSearch(t *testing.T) {
 	ctx := context.Background()
 	cat, imp, _ := setupTestCatalog(t)
 
 	_, privKey, _ := crypto.GenerateKeyPair()
 
-	// Track A
+	// Track A (English)
 	_, err := imp.Import(ctx, importer.ImportParams{
+		Title:        "Cyberpunk City Nights",
+		Artist:       "Neon Horizon",
+		Description:  "Atmospheric modular synthesizer soundtrack",
+		DurationMs:   240000,
+		BitrateKbps:  320,
+		LicenseCode:  protocol.LicenseCCBY40,
+		PublisherKey: privKey,
+		AudioData:    bytes.NewReader(bytes.Repeat([]byte{0xCC}, 150*1024)),
+	})
+	if err != nil {
+		t.Fatalf("failed to import track A: %v", err)
+	}
+
+	// Track B (Ukrainian)
+	_, err = imp.Import(ctx, importer.ImportParams{
 		Title:        "Мелодія карпатської сопілки",
 		Artist:       "Василь Гуцул",
 		Description:  "Традиційний фольклорний інструментальний твір",
@@ -115,10 +130,10 @@ func TestCatalogFTS5UkrainianSearch(t *testing.T) {
 		AudioData:    bytes.NewReader(bytes.Repeat([]byte{0xAA}, 150*1024)),
 	})
 	if err != nil {
-		t.Fatalf("failed to import track A: %v", err)
+		t.Fatalf("failed to import track B: %v", err)
 	}
 
-	// Track B
+	// Track C (Ukrainian)
 	_, err = imp.Import(ctx, importer.ImportParams{
 		Title:        "Вечірній джаз у парку",
 		Artist:       "Тарас Шевченко",
@@ -130,22 +145,28 @@ func TestCatalogFTS5UkrainianSearch(t *testing.T) {
 		AudioData:    bytes.NewReader(bytes.Repeat([]byte{0xBB}, 150*1024)),
 	})
 	if err != nil {
-		t.Fatalf("failed to import track B: %v", err)
+		t.Fatalf("failed to import track C: %v", err)
 	}
 
-	// 1. Search by title prefix
-	results, total, err := cat.ListTracks(ctx, catalog.Query{Search: "сопілк"})
+	// 1. English title prefix search
+	results, total, err := cat.ListTracks(ctx, catalog.Query{Search: "cyberpunk"})
 	if err != nil {
-		t.Fatalf("search failed: %v", err)
+		t.Fatalf("English search failed: %v", err)
 	}
-	if total != 1 || len(results) != 1 {
-		t.Fatalf("expected 1 search result for 'сопілк', got total=%d len=%d", total, len(results))
-	}
-	if results[0].Title != "Мелодія карпатської сопілки" {
-		t.Fatalf("unexpected search result: %s", results[0].Title)
+	if total != 1 || len(results) != 1 || results[0].Title != "Cyberpunk City Nights" {
+		t.Fatalf("unexpected English search result: %v", results)
 	}
 
-	// 2. Search by artist
+	// 2. Ukrainian title prefix search
+	results, total, err = cat.ListTracks(ctx, catalog.Query{Search: "сопілк"})
+	if err != nil {
+		t.Fatalf("Ukrainian prefix search failed: %v", err)
+	}
+	if total != 1 || len(results) != 1 || results[0].Title != "Мелодія карпатської сопілки" {
+		t.Fatalf("unexpected Ukrainian search result: %v", results)
+	}
+
+	// 3. Ukrainian artist search
 	results, total, err = cat.ListTracks(ctx, catalog.Query{Search: "Шевченко"})
 	if err != nil {
 		t.Fatalf("search for artist failed: %v", err)
@@ -154,7 +175,7 @@ func TestCatalogFTS5UkrainianSearch(t *testing.T) {
 		t.Fatalf("expected artist match for Шевченко, got: %v", results)
 	}
 
-	// 3. Search by description keyword
+	// 4. Ukrainian description keyword
 	results, total, err = cat.ListTracks(ctx, catalog.Query{Search: "контрабас"})
 	if err != nil {
 		t.Fatalf("search for description failed: %v", err)
@@ -163,8 +184,8 @@ func TestCatalogFTS5UkrainianSearch(t *testing.T) {
 		t.Fatalf("expected match for description keyword, got: %v", results)
 	}
 
-	// 4. Search with no matches
-	results, total, err = cat.ListTracks(ctx, catalog.Query{Search: "неіснуючеСлово"})
+	// 5. Search with no matches
+	results, total, err = cat.ListTracks(ctx, catalog.Query{Search: "nonExistentTerm"})
 	if err != nil {
 		t.Fatalf("empty search failed: %v", err)
 	}
@@ -185,9 +206,9 @@ func TestCatalogGetTrackAndManifest(t *testing.T) {
 	}
 
 	origManifest, err := imp.Import(ctx, importer.ImportParams{
-		Title:        "Синтезаторний ранок",
-		Artist:       "Олексій Електронний",
-		Description:  "Електронний трек",
+		Title:        "Ambient Dawn",
+		Artist:       "Electronic Producer",
+		Description:  "Ambient synthesizer recording",
 		DurationMs:   150000,
 		BitrateKbps:  192,
 		LicenseCode:  protocol.LicenseCC0,

@@ -44,9 +44,9 @@ func TestImporterFullPipeline(t *testing.T) {
 	}
 
 	params := importer.ImportParams{
-		Title:        "Вечірній Дзвін",
-		Artist:       "Тарас Мельник",
-		Description:  "Студійний трек записаний для тестування P2P мережі",
+		Title:        "Echoes of Silence",
+		Artist:       "Resona Ensemble",
+		Description:  "Studio recording prepared for decentralized streaming verification",
 		DurationMs:   195000,
 		BitrateKbps:  192,
 		LicenseCode:  protocol.LicenseCCBY40,
@@ -103,7 +103,7 @@ func TestImporterFullPipeline(t *testing.T) {
 
 	// 4. Verify FTS5 Trigger Population
 	var ftsCount int
-	err = db.Raw().QueryRow("SELECT COUNT(*) FROM tracks_fts WHERE tracks_fts MATCH 'дзвін*'").Scan(&ftsCount)
+	err = db.Raw().QueryRow("SELECT COUNT(*) FROM tracks_fts WHERE tracks_fts MATCH 'silence*'").Scan(&ftsCount)
 	if err != nil {
 		t.Fatalf("FTS5 query failed: %v", err)
 	}
