@@ -103,10 +103,16 @@ func (pt *PeerTracker) Count() int {
 
 // DiscoveryService orchestrates mDNS broadcasting and auto-connection in the local network.
 type DiscoveryService struct {
-	host       *Host
-	service    mdns.Service
-	tracker    *PeerTracker
-	serviceTag string
+	host            *Host
+	service         mdns.Service
+	tracker         *PeerTracker
+	serviceTag      string
+	onPeerConnected func(peer.ID)
+}
+
+// SetOnPeerConnected registers a callback executed when a connection to a discovered peer is established.
+func (d *DiscoveryService) SetOnPeerConnected(fn func(peer.ID)) {
+	d.onPeerConnected = fn
 }
 
 // NewDiscoveryService creates and binds an mDNS service to the libp2p host.
@@ -163,6 +169,10 @@ func (d *DiscoveryService) HandlePeerFound(pi peer.AddrInfo) {
 
 		d.tracker.SetConnected(pi.ID, true)
 		slog.Info("Successfully connected to discovered swarm peer", "peer_id", pi.ID.String())
+
+		if d.onPeerConnected != nil {
+			go d.onPeerConnected(pi.ID)
+		}
 	}()
 }
 

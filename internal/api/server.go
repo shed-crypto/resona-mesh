@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"resonamesh/internal/catalog"
 	"resonamesh/internal/config"
 	"resonamesh/internal/importer"
@@ -24,6 +26,11 @@ import (
 
 const AppVersion = "0.1.0-alpha"
 
+// Syncer coordinates manifest synchronization with connected swarm peers.
+type Syncer interface {
+	SyncFromPeer(ctx context.Context, peerID peer.ID) (int, error)
+}
+
 // Server provides the local HTTP REST and audio streaming API for ResonaMesh.
 type Server struct {
 	cfg          *config.Config
@@ -31,6 +38,7 @@ type Server struct {
 	importer     *importer.Importer
 	streamer     *player.Streamer
 	peerTracker  *p2p.PeerTracker
+	syncer       Syncer
 	publisherKey ed25519.PrivateKey
 	startTime    time.Time
 	mux          *http.ServeMux
@@ -95,6 +103,11 @@ func (s *Server) SetPeerTracker(pt *p2p.PeerTracker) {
 	s.peerTracker = pt
 }
 
+// SetSyncer binds the P2P catalog syncer for swarm synchronization.
+func (s *Server) SetSyncer(sy Syncer) {
+	s.syncer = sy
+}
+
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tracks", s.handleListTracks)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}", s.handleGetTrack)
@@ -104,6 +117,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/tracks/import", s.handleImportTrack)
 	s.mux.HandleFunc("GET /api/v1/stream/{id}", s.handleStream)
 	s.mux.HandleFunc("GET /api/v1/peers", s.handleListPeers)
+	s.mux.HandleFunc("POST /api/v1/peers/sync", s.handleSyncPeers)
 	s.mux.HandleFunc("GET /api/v1/node/status", s.handleNodeStatus)
 
 	if webHandler, err := web.DistHandler(); err == nil {
@@ -347,6 +361,38 @@ func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"peers": peers,
 		"total": len(peers),
+	})
+}
+
+// handleSyncPeers triggers catalog synchronization across all connected swarm peers.
+func (s *Server) handleSyncPeers(w http.ResponseWriter, r *http.Request) {
+	if s.syncer == nil || s.peerTracker == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":          "syncer_not_configured",
+			"imported_tracks": 0,
+		})
+		return
+	}
+
+	peers := s.peerTracker.Peers()
+	totalImported := 0
+	ctx := r.Context()
+
+	for _, p := range peers {
+		if !p.Connected {
+			continue
+		}
+		count, err := s.syncer.SyncFromPeer(ctx, p.ID)
+		if err == nil {
+			totalImported += count
+		} else {
+			slog.Debug("Manual peer sync failed", "peer_id", p.ID.String(), "err", err)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":          "success",
+		"imported_tracks": totalImported,
 	})
 }
 
