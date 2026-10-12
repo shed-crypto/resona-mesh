@@ -89,6 +89,16 @@ export const apiClient = {
     return res.json();
   },
 
+  async syncPeers(): Promise<{ status: string; imported_tracks: number }> {
+    const res = await fetch(`${API_BASE}/peers/sync`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to sync peers: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
   getStreamUrl(id: string): string {
     return `${API_BASE}/stream/${id}`;
   },
