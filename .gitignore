@@ -48,6 +48,7 @@ data/keys/
 
 # === Test/Experiment data ===
 data/
+data_*/
 experiments/results/
 *.csv
 !tests/fixtures/**/*.csv

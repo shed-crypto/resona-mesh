@@ -12,9 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"resonamesh/internal/catalog"
 	"resonamesh/internal/config"
 	"resonamesh/internal/importer"
+	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/pkg/crypto"
 	"resonamesh/pkg/protocol"
@@ -23,12 +26,19 @@ import (
 
 const AppVersion = "0.1.0-alpha"
 
+// Syncer coordinates manifest synchronization with connected swarm peers.
+type Syncer interface {
+	SyncFromPeer(ctx context.Context, peerID peer.ID) (int, error)
+}
+
 // Server provides the local HTTP REST and audio streaming API for ResonaMesh.
 type Server struct {
 	cfg          *config.Config
 	catalog      *catalog.Catalog
 	importer     *importer.Importer
 	streamer     *player.Streamer
+	peerTracker  *p2p.PeerTracker
+	syncer       Syncer
 	publisherKey ed25519.PrivateKey
 	startTime    time.Time
 	mux          *http.ServeMux
@@ -88,6 +98,16 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
+// SetPeerTracker binds the P2P peer tracker for peer telemetry endpoints.
+func (s *Server) SetPeerTracker(pt *p2p.PeerTracker) {
+	s.peerTracker = pt
+}
+
+// SetSyncer binds the P2P catalog syncer for swarm synchronization.
+func (s *Server) SetSyncer(sy Syncer) {
+	s.syncer = sy
+}
+
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tracks", s.handleListTracks)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}", s.handleGetTrack)
@@ -96,6 +116,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/tracks/{id}", s.handleDeleteTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/import", s.handleImportTrack)
 	s.mux.HandleFunc("GET /api/v1/stream/{id}", s.handleStream)
+	s.mux.HandleFunc("GET /api/v1/peers", s.handleListPeers)
+	s.mux.HandleFunc("POST /api/v1/peers/sync", s.handleSyncPeers)
 	s.mux.HandleFunc("GET /api/v1/node/status", s.handleNodeStatus)
 
 	if webHandler, err := web.DistHandler(); err == nil {
@@ -325,6 +347,55 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	s.streamer.StreamTrack(w, r, id)
 }
 
+// handleListPeers returns active P2P swarm peers discovered or connected.
+func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
+	if s.peerTracker == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"peers": []p2p.PeerRecord{},
+			"total": 0,
+		})
+		return
+	}
+
+	peers := s.peerTracker.Peers()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"peers": peers,
+		"total": len(peers),
+	})
+}
+
+// handleSyncPeers triggers catalog synchronization across all connected swarm peers.
+func (s *Server) handleSyncPeers(w http.ResponseWriter, r *http.Request) {
+	if s.syncer == nil || s.peerTracker == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":          "syncer_not_configured",
+			"imported_tracks": 0,
+		})
+		return
+	}
+
+	peers := s.peerTracker.Peers()
+	totalImported := 0
+	ctx := r.Context()
+
+	for _, p := range peers {
+		if !p.Connected {
+			continue
+		}
+		count, err := s.syncer.SyncFromPeer(ctx, p.ID)
+		if err == nil {
+			totalImported += count
+		} else {
+			slog.Debug("Manual peer sync failed", "peer_id", p.ID.String(), "err", err)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":          "success",
+		"imported_tracks": totalImported,
+	})
+}
+
 // handleNodeStatus returns runtime status, storage usage, and node publisher identity.
 func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	totalTracks, storedBytes, err := s.catalog.Stats(r.Context())
@@ -336,6 +407,15 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	pubKey := s.publisherKey.Public().(ed25519.PublicKey)
 	pubKeyHex := crypto.PublicKeyToHex(pubKey)
 
+	connectedPeers := 0
+	if s.peerTracker != nil {
+		for _, p := range s.peerTracker.Peers() {
+			if p.Connected {
+				connectedPeers++
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"version":             AppVersion,
 		"publisher_key":       pubKeyHex,
@@ -343,6 +423,7 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		"storage_quota_bytes": s.cfg.StorageQuotaBytes,
 		"storage_used_bytes":  storedBytes,
 		"total_tracks":        totalTracks,
+		"connected_peers":     connectedPeers,
 		"uptime_seconds":      int64(time.Since(s.startTime).Seconds()),
 	})
 }
