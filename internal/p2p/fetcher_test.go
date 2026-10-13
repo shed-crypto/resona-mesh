@@ -132,3 +132,68 @@ func TestFetcherOperations(t *testing.T) {
 		t.Fatalf("expected ErrBlockFetchFailed, got %v", err)
 	}
 }
+
+func TestFetcherQuotaGracefulDegradation(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	bsB, _ := storage.NewBlockStore(filepath.Join(tmpDir, "nodeB"))
+	dbB, _ := storage.Open(filepath.Join(tmpDir, "nodeB", "catalog.db"))
+	defer dbB.Close()
+
+	// Node B has a tiny quota of 10 bytes (cannot fit any 256 KiB chunk)
+	qmB := storage.NewQuotaManager(10, filepath.Join(tmpDir, "nodeB"), dbB, bsB, nil)
+
+	_, privA, _ := crypto.GenerateKeyPair()
+	_, privB, _ := crypto.GenerateKeyPair()
+
+	hostA, _ := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privA,
+		DisableRelay: true,
+	})
+	defer hostA.Close()
+
+	hostB, _ := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privB,
+		DisableRelay: true,
+	})
+	defer hostB.Close()
+
+	chunk := []byte("audio-chunk-sample-data")
+	validHash := crypto.HashChunkHex(chunk)
+	providerA := &memoryProvider{
+		blocks: map[string][]byte{
+			validHash: chunk,
+		},
+	}
+	_ = NewProtocolHandler(hostA, providerA)
+
+	mockCat := &mockCatalogRecorder{}
+	fetcher := NewFetcher(hostB, bsB, mockCat)
+	fetcher.SetQuotaManager(qmB)
+
+	// Connect hosts
+	if err := hostB.Connect(ctx, hostA.AddrInfo()); err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+
+	// Fetch block. Even though quota is exceeded and chunk cannot be cached on disk,
+	// it must still return data to the caller for transient streaming without failing the audio session.
+	data, err := fetcher.FetchBlock(ctx, "track-1", 0, validHash)
+	if err != nil {
+		t.Fatalf("expected successful streaming return even with full quota, got: %v", err)
+	}
+	if len(data) != len(chunk) {
+		t.Fatalf("mismatched data length")
+	}
+
+	// Must NOT be stored in local blockstore or recorded in catalog
+	if bsB.Has(validHash) {
+		t.Fatal("chunk must NOT be committed to disk when quota is exceeded")
+	}
+	if mockCat.storedCalls != 0 {
+		t.Fatalf("catalog must not be marked stored when quota is exceeded")
+	}
+}

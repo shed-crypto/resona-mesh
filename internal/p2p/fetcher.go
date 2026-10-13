@@ -21,9 +21,10 @@ type CatalogRecorder interface {
 
 // Fetcher coordinates retrieval of missing audio chunks from the P2P swarm.
 type Fetcher struct {
-	host       *Host
-	blockStore *storage.BlockStore
-	catalog    CatalogRecorder
+	host         *Host
+	blockStore   *storage.BlockStore
+	catalog      CatalogRecorder
+	quotaManager *storage.QuotaManager
 }
 
 // NewFetcher creates a new swarm block fetcher.
@@ -33,6 +34,11 @@ func NewFetcher(h *Host, bs *storage.BlockStore, cat CatalogRecorder) *Fetcher {
 		blockStore: bs,
 		catalog:    cat,
 	}
+}
+
+// SetQuotaManager binds the storage quota manager to validate disk allowances before caching blocks.
+func (f *Fetcher) SetQuotaManager(qm *storage.QuotaManager) {
+	f.quotaManager = qm
 }
 
 // FetchBlock retrieves an audio block by its hash. It first checks the local block store;
@@ -84,18 +90,39 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 			continue
 		}
 
-		// 4. Persist to local blockstore
-		if f.blockStore != nil {
+		// 4. Reserve disk space and persist to local blockstore
+		var resToken storage.ReservationToken
+		shouldStore := true
+
+		if f.quotaManager != nil {
+			tok, err := f.quotaManager.Reserve(ctx, int64(len(data)))
+			if err != nil {
+				slog.Warn("Storage quota exceeded, streaming chunk without local caching",
+					"hash", blockHash,
+					"err", err,
+				)
+				shouldStore = false
+			} else {
+				resToken = tok
+			}
+		}
+
+		if shouldStore && f.blockStore != nil {
 			if err := f.blockStore.Put(blockHash, data); err != nil {
 				slog.Warn("Failed to persist downloaded swarm block to disk",
 					"hash", blockHash,
 					"err", err,
 				)
+				if f.quotaManager != nil && resToken.ID != "" {
+					f.quotaManager.Release(resToken)
+					resToken = storage.ReservationToken{}
+				}
+				shouldStore = false
 			}
 		}
 
 		// 5. Update catalog availability
-		if f.catalog != nil && contentID != "" {
+		if shouldStore && f.catalog != nil && contentID != "" {
 			if err := f.catalog.MarkBlockStored(ctx, contentID, blockIndex, len(data)); err != nil {
 				slog.Warn("Failed to update catalog for stored block",
 					"content_id", contentID,
@@ -103,6 +130,10 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 					"err", err,
 				)
 			}
+		}
+
+		if shouldStore && f.quotaManager != nil && resToken.ID != "" {
+			f.quotaManager.Commit(resToken, int64(len(data)))
 		}
 
 		slog.Info("Successfully fetched block from swarm peer",
