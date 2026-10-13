@@ -11,10 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"resonamesh/internal/api"
 	"resonamesh/internal/catalog"
 	"resonamesh/internal/config"
 	"resonamesh/internal/importer"
+	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
 	"resonamesh/pkg/crypto"
@@ -100,17 +103,67 @@ func main() {
 	imp := importer.NewImporter(bs, db)
 	str := player.NewStreamer(cat, bs)
 
-	// 5. Initialize and launch HTTP REST & streaming server
-	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
-	serverErrors := make(chan error, 1)
+	// 5. Initialize P2P Host and Swarm engine
+	p2pListenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
+	p2pHost, err := p2p.NewHost(p2p.HostConfig{
+		ListenAddr:   p2pListenAddr,
+		PrivateKey:   privKey,
+		DisableRelay: true,
+	})
+	if err != nil {
+		slog.Error("Failed to initialize libp2p host", "error", err)
+		os.Exit(1)
+	}
+	defer p2pHost.Close()
 
+	// 6. Register P2P block exchange wire protocol
+	p2p.NewProtocolHandler(p2pHost, &catalogBlockProvider{bs: bs})
+
+	// 7. Register P2P manifest synchronization protocol
+	syncer, err := p2p.NewCatalogSyncer(p2pHost, cat)
+	if err != nil {
+		slog.Error("Failed to initialize catalog syncer", "error", err)
+		os.Exit(1)
+	}
+
+	// 8. Start mDNS peer discovery and tracker
+	peerTracker := p2p.NewPeerTracker()
+	discovery := p2p.NewDiscoveryService(p2pHost, peerTracker, p2p.DefaultMDNSServiceTag)
+	discovery.SetOnPeerConnected(func(peerID peer.ID) {
+		slog.Info("Peer connected, triggering auto-sync of catalog manifests", "peer_id", peerID.String())
+		syncCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if count, err := syncer.SyncFromPeer(syncCtx, peerID); err != nil {
+			slog.Debug("Auto catalog sync with peer finished with notice", "peer_id", peerID.String(), "err", err)
+		} else if count > 0 {
+			slog.Info("Successfully synced manifests from swarm peer", "peer_id", peerID.String(), "imported_tracks", count)
+		}
+	})
+	if err := discovery.Start(); err != nil {
+		slog.Warn("Failed to start mDNS peer discovery", "error", err)
+	}
+	defer discovery.Close()
+
+	// 9. Wire swarm fetcher into audio streamer
+	fetcher := p2p.NewFetcher(p2pHost, bs, cat)
+	str.SetFetcher(fetcher)
+
+	// 10. Initialize and launch HTTP REST & streaming server
+	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
+	apiServer.SetPeerTracker(peerTracker)
+	apiServer.SetSyncer(syncer)
+
+	serverErrors := make(chan error, 1)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			serverErrors <- err
 		}
 	}()
 
-	slog.Info("ResonaMesh node running. Awaiting shutdown signal...", "http", cfg.HTTPAddr)
+	slog.Info("ResonaMesh node running. Awaiting shutdown signal...",
+		"http", cfg.HTTPAddr,
+		"p2p_peer_id", p2pHost.ID().String(),
+	)
 
 	select {
 	case err := <-serverErrors:
@@ -127,5 +180,13 @@ func main() {
 	}
 
 	slog.Info("ResonaMesh node shutdown completed cleanly.")
+}
+
+type catalogBlockProvider struct {
+	bs *storage.BlockStore
+}
+
+func (p *catalogBlockProvider) GetBlock(_ context.Context, _ string, _ int, blockHash string) ([]byte, error) {
+	return p.bs.Get(blockHash)
 }
 

@@ -113,6 +113,8 @@ export function useAudioPlayer() {
     if (currentTrack?.content_id === track.content_id) {
       if (audio.paused) {
         await audio.play().catch(console.error);
+      } else {
+        audio.pause();
       }
       return;
     }
