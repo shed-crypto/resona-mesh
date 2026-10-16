@@ -98,10 +98,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 4. Instantiate domain services
+	// Startup storage reconciliation pass (orphan cleanup, temp purging)
+	if _, err := storage.Recover(ctx, cfg.DataDir, db, bs); err != nil {
+		slog.Warn("Storage recovery completed with notices", "error", err)
+	}
+
+	// 4. Instantiate storage quota manager & domain services
+	activeTracker := storage.NewActiveTracker()
+	qm := storage.NewQuotaManager(cfg.StorageQuotaBytes, cfg.DataDir, db, bs, activeTracker)
+
 	cat := catalog.New(db, bs)
 	imp := importer.NewImporter(bs, db)
+	imp.SetQuotaManager(qm)
 	str := player.NewStreamer(cat, bs)
+	str.SetActiveTracker(activeTracker)
+	str.SetQuotaManager(qm)
 
 	// 5. Initialize P2P Host and Swarm engine
 	p2pListenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
@@ -146,6 +157,7 @@ func main() {
 
 	// 9. Wire swarm fetcher into audio streamer
 	fetcher := p2p.NewFetcher(p2pHost, bs, cat)
+	fetcher.SetQuotaManager(qm)
 	str.SetFetcher(fetcher)
 
 	// 10. Initialize and launch HTTP REST & streaming server
