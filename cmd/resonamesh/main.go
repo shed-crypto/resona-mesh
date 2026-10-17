@@ -98,10 +98,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 4. Instantiate domain services
+	// Startup storage reconciliation pass (orphan cleanup, temp purging)
+	if _, err := storage.Recover(ctx, cfg.DataDir, db, bs); err != nil {
+		slog.Warn("Storage recovery completed with notices", "error", err)
+	}
+
+	// 4. Instantiate storage quota manager & domain services
+	activeTracker := storage.NewActiveTracker()
+	qm := storage.NewQuotaManager(cfg.StorageQuotaBytes, cfg.DataDir, db, bs, activeTracker)
+
 	cat := catalog.New(db, bs)
 	imp := importer.NewImporter(bs, db)
+	imp.SetQuotaManager(qm)
 	str := player.NewStreamer(cat, bs)
+	str.SetActiveTracker(activeTracker)
+	str.SetQuotaManager(qm)
 
 	// 5. Initialize P2P Host and Swarm engine
 	p2pListenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
@@ -146,12 +157,26 @@ func main() {
 
 	// 9. Wire swarm fetcher into audio streamer
 	fetcher := p2p.NewFetcher(p2pHost, bs, cat)
+	fetcher.SetQuotaManager(qm)
 	str.SetFetcher(fetcher)
 
-	// 10. Initialize and launch HTTP REST & streaming server
+	// 10. Initialize Keeper background replication service
+	keeper := p2p.NewKeeper(p2p.KeeperConfig{
+		Enabled:      cfg.KeeperEnabled,
+		Interval:     30 * time.Second,
+		TargetCopies: 2,
+	}, cat, fetcher, str, qm)
+	if err := keeper.Start(ctx); err != nil {
+		slog.Warn("Failed to start keeper service", "error", err)
+	}
+	defer keeper.Stop()
+
+	// 11. Initialize and launch HTTP REST & streaming server
 	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
 	apiServer.SetPeerTracker(peerTracker)
 	apiServer.SetSyncer(syncer)
+	apiServer.SetQuotaManager(qm)
+	apiServer.SetP2PHost(p2pHost)
 
 	serverErrors := make(chan error, 1)
 	go func() {

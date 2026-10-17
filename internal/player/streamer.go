@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"resonamesh/internal/catalog"
 	"resonamesh/internal/storage"
@@ -25,9 +26,12 @@ type BlockFetcher interface {
 
 // Streamer serves content-addressed audio streams to browser media clients via HTTP Range requests.
 type Streamer struct {
-	catalog    *catalog.Catalog
-	blockStore *storage.BlockStore
-	fetcher    BlockFetcher
+	catalog       *catalog.Catalog
+	blockStore    *storage.BlockStore
+	fetcher       BlockFetcher
+	activeTracker *storage.ActiveTracker
+	quotaManager  *storage.QuotaManager
+	activeStreams int32
 }
 
 // NewStreamer constructs an HTTP Range audio streaming handler.
@@ -43,8 +47,26 @@ func (s *Streamer) SetFetcher(f BlockFetcher) {
 	s.fetcher = f
 }
 
+// SetActiveTracker binds an ActiveTracker to prevent in-flight streaming chunks from being evicted by LRU.
+func (s *Streamer) SetActiveTracker(at *storage.ActiveTracker) {
+	s.activeTracker = at
+}
+
+// SetQuotaManager binds the QuotaManager to refresh block access timestamps on playback.
+func (s *Streamer) SetQuotaManager(qm *storage.QuotaManager) {
+	s.quotaManager = qm
+}
+
+// IsStreaming reports whether one or more active audio playback sessions are currently in progress.
+func (s *Streamer) IsStreaming() bool {
+	return atomic.LoadInt32(&s.activeStreams) > 0
+}
+
 // StreamTrack streams partial audio byte ranges for a specific content ID.
 func (s *Streamer) StreamTrack(w http.ResponseWriter, r *http.Request, contentID string) {
+	atomic.AddInt32(&s.activeStreams, 1)
+	defer atomic.AddInt32(&s.activeStreams, -1)
+
 	ctx := r.Context()
 
 	track, err := s.catalog.GetTrack(ctx, contentID)
@@ -127,6 +149,14 @@ func (s *Streamer) streamByteRange(ctx context.Context, w http.ResponseWriter, c
 		}
 
 		hash := blockHashes[b]
+		if s.activeTracker != nil {
+			s.activeTracker.Retain(hash)
+			defer s.activeTracker.Release(hash)
+		}
+		if s.quotaManager != nil {
+			_ = s.quotaManager.TouchBlock(ctx, hash)
+		}
+
 		chunkData, err := s.blockStore.Get(hash)
 		if err != nil {
 			if s.fetcher != nil {
