@@ -34,14 +34,17 @@ type Track struct {
 	Pinned          bool    `json:"pinned"`
 	CreatedAt       int64   `json:"created_at"`
 	AvailabilityPct float64 `json:"availability_pct"` // 0.0 - 100.0%
+	Blocked         bool    `json:"blocked"`
+	BlockReason     string  `json:"block_reason,omitempty"`
 }
 
 // Query specifies filtering, searching, and pagination parameters.
 type Query struct {
-	Search     string
-	Limit      int
-	Offset     int
-	PinnedOnly bool
+	Search         string
+	Limit          int
+	Offset         int
+	PinnedOnly     bool
+	IncludeBlocked bool
 }
 
 // Catalog handles track querying, FTS5 full-text search, and availability computation.
@@ -81,7 +84,11 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 			SELECT COUNT(*) 
 			FROM tracks t
 			JOIN tracks_fts fts ON t.content_id = fts.content_id
+			LEFT JOIN blocked_content bc ON t.content_id = bc.content_id
 			WHERE tracks_fts MATCH ?`
+		if !q.IncludeBlocked {
+			countQuery += " AND bc.content_id IS NULL"
+		}
 		if q.PinnedOnly {
 			countQuery += " AND t.pinned = 1"
 		}
@@ -92,10 +99,16 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 				t.bitrate_kbps, t.total_size_bytes, t.block_size, t.block_count, 
 				t.publisher_key, t.published_at, t.license_code, t.signature, 
 				t.pinned, t.created_at,
-				(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks
+				(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks,
+				CASE WHEN bc.content_id IS NOT NULL THEN 1 ELSE 0 END AS is_blocked,
+				COALESCE(bc.reason_text, '') AS block_reason
 			FROM tracks t
 			JOIN tracks_fts fts ON t.content_id = fts.content_id
+			LEFT JOIN blocked_content bc ON t.content_id = bc.content_id
 			WHERE tracks_fts MATCH ?`
+		if !q.IncludeBlocked {
+			listQuery += " AND bc.content_id IS NULL"
+		}
 		if q.PinnedOnly {
 			listQuery += " AND t.pinned = 1"
 		}
@@ -104,9 +117,16 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 		args = []interface{}{ftsPattern}
 	} else {
 		// Standard Catalog List
-		countQuery = "SELECT COUNT(*) FROM tracks t"
+		countQuery = `
+			SELECT COUNT(*) 
+			FROM tracks t
+			LEFT JOIN blocked_content bc ON t.content_id = bc.content_id
+			WHERE 1=1`
+		if !q.IncludeBlocked {
+			countQuery += " AND bc.content_id IS NULL"
+		}
 		if q.PinnedOnly {
-			countQuery += " WHERE t.pinned = 1"
+			countQuery += " AND t.pinned = 1"
 		}
 
 		listQuery = `
@@ -115,10 +135,17 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 				t.bitrate_kbps, t.total_size_bytes, t.block_size, t.block_count, 
 				t.publisher_key, t.published_at, t.license_code, t.signature, 
 				t.pinned, t.created_at,
-				(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks
-			FROM tracks t`
+				(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks,
+				CASE WHEN bc.content_id IS NOT NULL THEN 1 ELSE 0 END AS is_blocked,
+				COALESCE(bc.reason_text, '') AS block_reason
+			FROM tracks t
+			LEFT JOIN blocked_content bc ON t.content_id = bc.content_id
+			WHERE 1=1`
+		if !q.IncludeBlocked {
+			listQuery += " AND bc.content_id IS NULL"
+		}
 		if q.PinnedOnly {
-			listQuery += " WHERE t.pinned = 1"
+			listQuery += " AND t.pinned = 1"
 		}
 		listQuery += " ORDER BY t.created_at DESC LIMIT ? OFFSET ?"
 	}
@@ -151,17 +178,19 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 	var tracks []Track
 	for rows.Next() {
 		var t Track
-		var pinnedInt, storedBlocks int
+		var pinnedInt, storedBlocks, isBlockedInt int
 		err := rows.Scan(
 			&t.ContentID, &t.Title, &t.Artist, &t.Description, &t.DurationMs,
 			&t.BitrateKbps, &t.TotalSizeBytes, &t.BlockSize, &t.BlockCount,
 			&t.PublisherKey, &t.PublishedAt, &t.LicenseCode, &t.Signature,
 			&pinnedInt, &t.CreatedAt, &storedBlocks,
+			&isBlockedInt, &t.BlockReason,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("catalog: failed to scan track: %w", err)
 		}
 		t.Pinned = (pinnedInt == 1)
+		t.Blocked = (isBlockedInt == 1)
 		if t.BlockCount > 0 {
 			t.AvailabilityPct = float64(storedBlocks) / float64(t.BlockCount) * 100.0
 		}
@@ -183,17 +212,21 @@ func (c *Catalog) GetTrack(ctx context.Context, contentID string) (*Track, error
 			t.bitrate_kbps, t.total_size_bytes, t.block_size, t.block_count, 
 			t.publisher_key, t.published_at, t.license_code, t.signature, 
 			t.pinned, t.created_at,
-			(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks
+			(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks,
+			CASE WHEN bc.content_id IS NOT NULL THEN 1 ELSE 0 END AS is_blocked,
+			COALESCE(bc.reason_text, '') AS block_reason
 		FROM tracks t
+		LEFT JOIN blocked_content bc ON t.content_id = bc.content_id
 		WHERE t.content_id = ?`
 
 	var t Track
-	var pinnedInt, storedBlocks int
+	var pinnedInt, storedBlocks, isBlockedInt int
 	err := c.db.Raw().QueryRowContext(ctx, query, contentID).Scan(
 		&t.ContentID, &t.Title, &t.Artist, &t.Description, &t.DurationMs,
 		&t.BitrateKbps, &t.TotalSizeBytes, &t.BlockSize, &t.BlockCount,
 		&t.PublisherKey, &t.PublishedAt, &t.LicenseCode, &t.Signature,
 		&pinnedInt, &t.CreatedAt, &storedBlocks,
+		&isBlockedInt, &t.BlockReason,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -203,6 +236,7 @@ func (c *Catalog) GetTrack(ctx context.Context, contentID string) (*Track, error
 	}
 
 	t.Pinned = (pinnedInt == 1)
+	t.Blocked = (isBlockedInt == 1)
 	if t.BlockCount > 0 {
 		t.AvailabilityPct = float64(storedBlocks) / float64(t.BlockCount) * 100.0
 	}
@@ -238,9 +272,15 @@ func (c *Catalog) GetManifest(ctx context.Context, contentID string) (*protocol.
 	}, nil
 }
 
-// ListManifests returns up to 100 track manifests currently registered in the catalog.
+// ListManifests returns up to 100 track manifests currently registered in the catalog, excluding blocked content.
 func (c *Catalog) ListManifests(ctx context.Context) ([]*protocol.Manifest, error) {
-	rows, err := c.db.Raw().QueryContext(ctx, "SELECT content_id FROM tracks ORDER BY created_at DESC LIMIT 100")
+	query := `
+		SELECT content_id 
+		FROM tracks 
+		WHERE content_id NOT IN (SELECT content_id FROM blocked_content)
+		ORDER BY created_at DESC 
+		LIMIT 100`
+	rows, err := c.db.Raw().QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("catalog: failed to list track IDs: %w", err)
 	}
@@ -263,6 +303,12 @@ func (c *Catalog) ListManifests(ctx context.Context) ([]*protocol.Manifest, erro
 
 // RegisterRemoteManifest inserts an authenticated swarm manifest with unseeded local blocks.
 func (c *Catalog) RegisterRemoteManifest(ctx context.Context, m *protocol.Manifest) error {
+	var isBlocked int
+	_ = c.db.Raw().QueryRowContext(ctx, "SELECT 1 FROM blocked_content WHERE content_id = ?", m.ContentID).Scan(&isBlocked)
+	if isBlocked == 1 {
+		return fmt.Errorf("catalog: cannot register remote manifest; content is blocked by policy")
+	}
+
 	var exists int
 	err := c.db.Raw().QueryRowContext(ctx, "SELECT 1 FROM tracks WHERE content_id = ?", m.ContentID).Scan(&exists)
 	if err == nil {
