@@ -41,6 +41,7 @@ type Importer struct {
 	chunker    *audio.Chunker
 	blockStore *storage.BlockStore
 	db         *storage.DB
+	quota      *storage.QuotaManager
 }
 
 // NewImporter constructs an audio importer instance.
@@ -50,6 +51,11 @@ func NewImporter(bs *storage.BlockStore, db *storage.DB) *Importer {
 		blockStore: bs,
 		db:         db,
 	}
+}
+
+// SetQuotaManager binds a storage quota manager to validate space reservations prior to block commits.
+func (imp *Importer) SetQuotaManager(qm *storage.QuotaManager) {
+	imp.quota = qm
 }
 
 // Import processes a local audio stream into discrete signed blocks and commits it to the catalog.
@@ -89,9 +95,22 @@ func (imp *Importer) Import(ctx context.Context, params ImportParams) (*protocol
 		return nil, ErrTrackAlreadyExists
 	}
 
-	// 2. Persist blocks into BlockStore
+	// 2. Reserve disk quota if QuotaManager is configured (accounting for temporary doubling)
+	var resToken storage.ReservationToken
+	if imp.quota != nil {
+		tok, err := imp.quota.Reserve(ctx, totalBytes*2)
+		if err != nil {
+			return nil, fmt.Errorf("importer: storage reservation failed: %w", err)
+		}
+		resToken = tok
+	}
+
+	// 3. Persist blocks into BlockStore
 	var storedHashes []string
 	cleanupBlocks := func() {
+		if imp.quota != nil && resToken.ID != "" {
+			imp.quota.Release(resToken)
+		}
 		for _, h := range storedHashes {
 			_ = imp.blockStore.Delete(h)
 		}
@@ -196,6 +215,10 @@ func (imp *Importer) Import(ctx context.Context, params ImportParams) (*protocol
 	if err := tx.Commit(); err != nil {
 		cleanupBlocks()
 		return nil, fmt.Errorf("importer: failed to commit import transaction: %w", err)
+	}
+
+	if imp.quota != nil && resToken.ID != "" {
+		imp.quota.Commit(resToken, totalBytes)
 	}
 
 	return manifest, nil
