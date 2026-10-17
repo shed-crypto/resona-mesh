@@ -1,5 +1,5 @@
 import type { Track, Manifest, TrackListResponse } from '../../types/track';
-import type { NodeStatus, PeerRecord } from '../../types/node';
+import type { NodeStatus, PeerRecord, StorageUsage, NodeSettings } from '../../types/node';
 
 const API_BASE = '/api/v1';
 
@@ -95,6 +95,48 @@ export const apiClient = {
     });
     if (!res.ok) {
       throw new Error(`Failed to sync peers: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async getStorage(): Promise<StorageUsage> {
+    const res = await fetch(`${API_BASE}/storage`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch storage metrics: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async getSettings(): Promise<NodeSettings> {
+    const res = await fetch(`${API_BASE}/settings`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch settings: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async updateSettings(settings: Partial<NodeSettings>): Promise<NodeSettings> {
+    const res = await fetch(`${API_BASE}/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to update settings`);
+    }
+    return res.json();
+  },
+
+  async connectPeer(addr: string): Promise<{ status: string; peer_id: string }> {
+    const res = await fetch(`${API_BASE}/peers/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addr }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to connect to peer`);
     }
     return res.json();
   },
