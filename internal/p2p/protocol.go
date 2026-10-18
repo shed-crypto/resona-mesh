@@ -22,6 +22,7 @@ const (
 	StatusSuccess  byte = 0x00
 	StatusNotFound byte = 0x01
 	StatusError    byte = 0x02
+	StatusBlocked  byte = 0x03
 
 	// MaxBlockRequestSize prevents memory exhaustion on malformed request headers.
 	MaxBlockRequestSize = 64 * 1024
@@ -33,6 +34,7 @@ const (
 var (
 	ErrBlockNotFound      = errors.New("p2p: requested block not found on remote peer")
 	ErrRemotePeerError    = errors.New("p2p: remote peer encountered error serving block")
+	ErrContentBlocked     = errors.New("p2p: content is blocked by moderation policy")
 	ErrInvalidStatus      = errors.New("p2p: invalid wire status code from peer")
 	ErrBlockHashMismatch  = errors.New("p2p: received block failed SHA-256 integrity verification")
 	ErrBlockSizeExceeded  = errors.New("p2p: received block exceeds maximum allowed block size")
@@ -53,8 +55,9 @@ type BlockProvider interface {
 
 // ProtocolHandler registers and serves the ResonaMesh block exchange protocol.
 type ProtocolHandler struct {
-	host     *Host
-	provider BlockProvider
+	host         *Host
+	provider     BlockProvider
+	blockChecker BlockChecker
 }
 
 // NewProtocolHandler binds the block exchange wire protocol to the libp2p host.
@@ -66,6 +69,11 @@ func NewProtocolHandler(h *Host, provider BlockProvider) *ProtocolHandler {
 
 	h.Raw().SetStreamHandler(protocol.ProtocolBlock, ph.handleStream)
 	return ph
+}
+
+// SetBlockChecker binds a moderation policy checker to guard against serving blocked content over wire.
+func (ph *ProtocolHandler) SetBlockChecker(bc BlockChecker) {
+	ph.blockChecker = bc
 }
 
 // handleStream handles incoming stream requests from remote peers.
@@ -103,6 +111,14 @@ func (ph *ProtocolHandler) handleStream(s network.Stream) {
 	// 3. Query provider for block data
 	ctx, cancel := context.WithTimeout(context.Background(), StreamTimeout)
 	defer cancel()
+
+	if ph.blockChecker != nil {
+		blocked, _, err := ph.blockChecker.IsBlocked(ctx, req.ContentID, "")
+		if err == nil && blocked {
+			_ = binary.Write(s, binary.BigEndian, StatusBlocked)
+			return
+		}
+	}
 
 	data, err := ph.provider.GetBlock(ctx, req.ContentID, req.BlockIndex, req.BlockHash)
 	if err != nil {
@@ -169,6 +185,8 @@ func RequestBlock(
 	switch status {
 	case StatusNotFound:
 		return nil, ErrBlockNotFound
+	case StatusBlocked:
+		return nil, ErrContentBlocked
 	case StatusError:
 		return nil, ErrRemotePeerError
 	case StatusSuccess:
