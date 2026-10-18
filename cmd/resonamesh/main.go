@@ -17,6 +17,7 @@ import (
 	"resonamesh/internal/catalog"
 	"resonamesh/internal/config"
 	"resonamesh/internal/importer"
+	"resonamesh/internal/moderation"
 	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
@@ -107,12 +108,27 @@ func main() {
 	activeTracker := storage.NewActiveTracker()
 	qm := storage.NewQuotaManager(cfg.StorageQuotaBytes, cfg.DataDir, db, bs, activeTracker)
 
+	// Initialize Moderation Policy Engine
+	modEngine, err := moderation.NewEngine(db, moderation.Config{
+		NetworkID:              "resonamesh-main",
+		PolicyID:               "policy-default",
+		PolicyEpoch:            1,
+		TrustedModeratorPubKey: cfg.TrustedModeratorPubKey,
+	}, privKey)
+	if err != nil {
+		slog.Error("Failed to initialize moderation engine", "error", err)
+		os.Exit(1)
+	}
+
 	cat := catalog.New(db, bs)
 	imp := importer.NewImporter(bs, db)
 	imp.SetQuotaManager(qm)
+	imp.SetBlockChecker(modEngine)
+
 	str := player.NewStreamer(cat, bs)
 	str.SetActiveTracker(activeTracker)
 	str.SetQuotaManager(qm)
+	str.SetBlockChecker(modEngine)
 
 	// 5. Initialize P2P Host and Swarm engine
 	p2pListenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
@@ -128,7 +144,8 @@ func main() {
 	defer p2pHost.Close()
 
 	// 6. Register P2P block exchange wire protocol
-	p2p.NewProtocolHandler(p2pHost, &catalogBlockProvider{bs: bs})
+	blockHandler := p2p.NewProtocolHandler(p2pHost, &catalogBlockProvider{bs: bs})
+	blockHandler.SetBlockChecker(modEngine)
 
 	// 7. Register P2P manifest synchronization protocol
 	syncer, err := p2p.NewCatalogSyncer(p2pHost, cat)
@@ -136,6 +153,11 @@ func main() {
 		slog.Error("Failed to initialize catalog syncer", "error", err)
 		os.Exit(1)
 	}
+
+	// Register P2P moderation wire protocol
+	modHandler := p2p.NewModerationHandler(p2pHost, modEngine, nil)
+	modHandler.Start(ctx)
+	defer modHandler.Stop()
 
 	// 8. Start mDNS peer discovery and tracker
 	peerTracker := p2p.NewPeerTracker()
@@ -158,6 +180,7 @@ func main() {
 	// 9. Wire swarm fetcher into audio streamer
 	fetcher := p2p.NewFetcher(p2pHost, bs, cat)
 	fetcher.SetQuotaManager(qm)
+	fetcher.SetBlockChecker(modEngine)
 	str.SetFetcher(fetcher)
 
 	// 10. Initialize Keeper background replication service
@@ -177,6 +200,7 @@ func main() {
 	apiServer.SetSyncer(syncer)
 	apiServer.SetQuotaManager(qm)
 	apiServer.SetP2PHost(p2pHost)
+	apiServer.SetModerationEngine(modEngine, nil)
 
 	serverErrors := make(chan error, 1)
 	go func() {

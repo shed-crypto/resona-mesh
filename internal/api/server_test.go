@@ -19,6 +19,7 @@ import (
 	"resonamesh/internal/catalog"
 	"resonamesh/internal/config"
 	"resonamesh/internal/importer"
+	"resonamesh/internal/moderation"
 	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
@@ -59,6 +60,17 @@ func setupTestServer(t *testing.T) (*httptest.Server, *catalog.Catalog, ed25519.
 	}
 
 	server := api.NewServer(cfg, cat, imp, str, priv)
+
+	modEngine, err := moderation.NewEngine(db, moderation.Config{
+		NetworkID:              "resonamesh-test",
+		PolicyID:               "policy-test",
+		PolicyEpoch:            1,
+		TrustedModeratorPubKey: crypto.PublicKeyToHex(priv.Public().(ed25519.PublicKey)),
+	}, priv)
+	if err == nil {
+		server.SetModerationEngine(modEngine, priv)
+	}
+
 	ts := httptest.NewServer(server.Handler())
 	t.Cleanup(ts.Close)
 
@@ -736,6 +748,118 @@ func TestManualPeerConnectEndpoint(t *testing.T) {
 		t.Fatalf("unexpected connect result: %+v", res)
 	}
 }
+
+func TestAPIModerationEndpoints(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+
+	// 1. Submit a report
+	repPayload := map[string]string{
+		"content_id":         "reported-content-99",
+		"reason_code":        protocol.ReasonCopyrightClaim,
+		"description":        "Infringing copyright claims",
+		"evidence_reference": "https://example.com/claim",
+	}
+	repBytes, _ := json.Marshal(repPayload)
+
+	resp, err := http.Post(ts.URL+"/api/v1/reports", "application/json", bytes.NewReader(repBytes))
+	if err != nil {
+		t.Fatalf("failed to post report: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for report submission, got %d", resp.StatusCode)
+	}
+
+	var createdReport protocol.ReportEvent
+	if err := json.NewDecoder(resp.Body).Decode(&createdReport); err != nil {
+		t.Fatalf("failed to parse created report: %v", err)
+	}
+	if createdReport.ContentID != "reported-content-99" || createdReport.Signature == "" {
+		t.Fatalf("unexpected report structure: %+v", createdReport)
+	}
+
+	// 2. List reports
+	respList, err := http.Get(ts.URL + "/api/v1/reports")
+	if err != nil {
+		t.Fatalf("failed to get reports: %v", err)
+	}
+	defer respList.Body.Close()
+
+	if respList.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for list reports, got %d", respList.StatusCode)
+	}
+
+	var reportList struct {
+		Items []moderation.ReportRecord `json:"items"`
+		Total int                       `json:"total"`
+	}
+	if err := json.NewDecoder(respList.Body).Decode(&reportList); err != nil {
+		t.Fatalf("failed to parse report list: %v", err)
+	}
+	if reportList.Total != 1 || len(reportList.Items) != 1 {
+		t.Fatalf("expected 1 report in list, got total=%d", reportList.Total)
+	}
+
+	// 3. Create a moderation decision (BLOCK)
+	decPayload := map[string]string{
+		"content_id":  "reported-content-99",
+		"action":      protocol.ActionBlock,
+		"reason_code": protocol.ReasonCopyrightClaim,
+		"reason_text": "Approved copyright takedown",
+	}
+	decBytes, _ := json.Marshal(decPayload)
+
+	respDec, err := http.Post(ts.URL+"/api/v1/moderation/decisions", "application/json", bytes.NewReader(decBytes))
+	if err != nil {
+		t.Fatalf("failed to post decision: %v", err)
+	}
+	defer respDec.Body.Close()
+
+	if respDec.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for decision, got %d", respDec.StatusCode)
+	}
+
+	// 4. List decisions
+	respDecList, err := http.Get(ts.URL + "/api/v1/moderation/decisions")
+	if err != nil {
+		t.Fatalf("failed to get decisions: %v", err)
+	}
+	defer respDecList.Body.Close()
+
+	var decList struct {
+		Items []moderation.DecisionRecord `json:"items"`
+		Total int                         `json:"total"`
+	}
+	if err := json.NewDecoder(respDecList.Body).Decode(&decList); err != nil {
+		t.Fatalf("failed to parse decision list: %v", err)
+	}
+	if decList.Total != 1 || len(decList.Items) != 1 {
+		t.Fatalf("expected 1 decision in list, got total=%d", decList.Total)
+	}
+
+	// 5. List blocked items
+	respBlocked, err := http.Get(ts.URL + "/api/v1/moderation/blocked")
+	if err != nil {
+		t.Fatalf("failed to get blocked items: %v", err)
+	}
+	defer respBlocked.Body.Close()
+
+	var blockedList struct {
+		Items []moderation.BlockedRecord `json:"items"`
+		Total int                        `json:"total"`
+	}
+	if err := json.NewDecoder(respBlocked.Body).Decode(&blockedList); err != nil {
+		t.Fatalf("failed to parse blocked list: %v", err)
+	}
+	if blockedList.Total != 1 || len(blockedList.Items) != 1 {
+		t.Fatalf("expected 1 blocked item, got total=%d", blockedList.Total)
+	}
+	if blockedList.Items[0].ContentID != "reported-content-99" {
+		t.Fatalf("unexpected blocked content ID: %s", blockedList.Items[0].ContentID)
+	}
+}
+
 
 
 
