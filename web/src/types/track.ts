@@ -15,6 +15,8 @@ export interface Track {
   pinned: boolean;
   created_at: number;
   availability_pct: number;
+  blocked?: boolean;
+  block_reason?: string;
 }
 
 export interface Manifest {
@@ -39,3 +41,48 @@ export interface TrackListResponse {
   limit: number;
   offset: number;
 }
+
+export interface Report {
+  event_id: string;
+  content_id: string;
+  payload_hash: string;
+  reporter_key: string;
+  reason_code: string;
+  description: string;
+  evidence_ref: string;
+  created_at: number;
+  nonce: string;
+  signature: string;
+  status: string;
+  receipt_signature: string;
+  receipt_received_at: number;
+}
+
+export interface Decision {
+  event_id: string;
+  schema_version: string;
+  network_id: string;
+  policy_id: string;
+  policy_epoch: number;
+  content_id: string;
+  payload_hash: string;
+  sequence: number;
+  previous_event_id: string;
+  action: string;
+  reason_code: string;
+  reason_text: string;
+  moderator_key: string;
+  issued_at: number;
+  signature: string;
+}
+
+export interface BlockedItem {
+  content_id: string;
+  payload_hash: string;
+  action: string;
+  decision_event_id: string;
+  reason_code: string;
+  reason_text: string;
+  blocked_at: number;
+}
+
