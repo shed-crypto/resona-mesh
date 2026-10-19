@@ -36,12 +36,18 @@ type ImportParams struct {
 	AudioData    io.Reader
 }
 
+// BlockChecker evaluates whether audio content is blocked by moderation policy.
+type BlockChecker interface {
+	IsBlocked(ctx context.Context, contentID string, payloadHash string) (bool, string, error)
+}
+
 // Importer coordinates audio chunking, block storage, manifest signing, and catalog persistence.
 type Importer struct {
-	chunker    *audio.Chunker
-	blockStore *storage.BlockStore
-	db         *storage.DB
-	quota      *storage.QuotaManager
+	chunker      *audio.Chunker
+	blockStore   *storage.BlockStore
+	db           *storage.DB
+	quota        *storage.QuotaManager
+	blockChecker BlockChecker
 }
 
 // NewImporter constructs an audio importer instance.
@@ -56,6 +62,11 @@ func NewImporter(bs *storage.BlockStore, db *storage.DB) *Importer {
 // SetQuotaManager binds a storage quota manager to validate space reservations prior to block commits.
 func (imp *Importer) SetQuotaManager(qm *storage.QuotaManager) {
 	imp.quota = qm
+}
+
+// SetBlockChecker binds a moderation policy checker to guard against importing blocked content.
+func (imp *Importer) SetBlockChecker(bc BlockChecker) {
+	imp.blockChecker = bc
 }
 
 // Import processes a local audio stream into discrete signed blocks and commits it to the catalog.
@@ -86,6 +97,13 @@ func (imp *Importer) Import(ctx context.Context, params ImportParams) (*protocol
 	chunks, contentID, totalBytes, err := imp.chunker.Split(params.AudioData)
 	if err != nil {
 		return nil, fmt.Errorf("importer: chunking failed: %w", err)
+	}
+
+	if imp.blockChecker != nil {
+		blocked, reason, err := imp.blockChecker.IsBlocked(ctx, contentID, "")
+		if err == nil && blocked {
+			return nil, fmt.Errorf("importer: content is blocked by moderation policy: %s", reason)
+		}
 	}
 
 	// Check if track already exists in database

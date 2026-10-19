@@ -24,11 +24,17 @@ type BlockFetcher interface {
 	FetchBlock(ctx context.Context, contentID string, blockIndex int, blockHash string) ([]byte, error)
 }
 
+// BlockChecker evaluates whether audio content is blocked by moderation policy.
+type BlockChecker interface {
+	IsBlocked(ctx context.Context, contentID string, payloadHash string) (bool, string, error)
+}
+
 // Streamer serves content-addressed audio streams to browser media clients via HTTP Range requests.
 type Streamer struct {
 	catalog       *catalog.Catalog
 	blockStore    *storage.BlockStore
 	fetcher       BlockFetcher
+	blockChecker  BlockChecker
 	activeTracker *storage.ActiveTracker
 	quotaManager  *storage.QuotaManager
 	activeStreams int32
@@ -45,6 +51,11 @@ func NewStreamer(cat *catalog.Catalog, bs *storage.BlockStore) *Streamer {
 // SetFetcher sets the optional P2P swarm fetcher for on-demand streaming retrieval.
 func (s *Streamer) SetFetcher(f BlockFetcher) {
 	s.fetcher = f
+}
+
+// SetBlockChecker binds a moderation policy checker to guard against streaming blocked content.
+func (s *Streamer) SetBlockChecker(bc BlockChecker) {
+	s.blockChecker = bc
 }
 
 // SetActiveTracker binds an ActiveTracker to prevent in-flight streaming chunks from being evicted by LRU.
@@ -68,6 +79,16 @@ func (s *Streamer) StreamTrack(w http.ResponseWriter, r *http.Request, contentID
 	defer atomic.AddInt32(&s.activeStreams, -1)
 
 	ctx := r.Context()
+
+	if s.blockChecker != nil {
+		blocked, reason, err := s.blockChecker.IsBlocked(ctx, contentID, "")
+		if err == nil && blocked {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprintf(w, `{"error":"content_blocked","reason":%q}`, reason)
+			return
+		}
+	}
 
 	track, err := s.catalog.GetTrack(ctx, contentID)
 	if err != nil {
