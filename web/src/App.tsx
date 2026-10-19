@@ -1,10 +1,18 @@
-import { Waves } from 'lucide-react';
+import { useState } from 'react';
+import { Waves, ShieldAlert } from 'lucide-react';
 import { useAudioPlayer } from './shared/hooks/useAudioPlayer';
 import { CatalogView } from './features/library/CatalogView';
 import { AudioPlayerBar } from './features/player/AudioPlayerBar';
 import { NodeStatusPanel } from './features/network/NodeStatusPanel';
+import { ReportTrackModal } from './features/moderation/ReportTrackModal';
+import { ModerationModal } from './features/moderation/ModerationModal';
+import { Button } from './shared/components/Button';
+import type { Track } from './types/track';
 
 export function App() {
+  const [reportTrack, setReportTrack] = useState<Track | null>(null);
+  const [isModerationOpen, setIsModerationOpen] = useState(false);
+
   const {
     currentTrack,
     playerState,
@@ -75,7 +83,17 @@ export function App() {
           </div>
         </div>
 
-        <NodeStatusPanel />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsModerationOpen(true)}
+            icon={<ShieldAlert size={15} style={{ color: 'var(--accent-amber)' }} />}
+          >
+            Policy & Reports
+          </Button>
+          <NodeStatusPanel />
+        </div>
       </header>
 
       {/* Main Catalog View Container */}
@@ -93,6 +111,7 @@ export function App() {
           isPlaying={playerState === 'playing'}
           onPlayTrack={playTrack}
           onTogglePlay={togglePlay}
+          onReportTrack={(t) => setReportTrack(t)}
         />
       </main>
 
@@ -109,6 +128,18 @@ export function App() {
         onSeek={seek}
         onVolumeChange={setVolume}
         onToggleMute={() => setIsMuted(!isMuted)}
+      />
+
+      {/* Moderation & Abuse Reporting Modals */}
+      <ReportTrackModal
+        track={reportTrack}
+        isOpen={Boolean(reportTrack)}
+        onClose={() => setReportTrack(null)}
+      />
+
+      <ModerationModal
+        isOpen={isModerationOpen}
+        onClose={() => setIsModerationOpen(false)}
       />
     </div>
   );
