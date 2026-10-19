@@ -3,6 +3,7 @@ package p2p
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -19,12 +20,18 @@ type CatalogRecorder interface {
 	MarkBlockStored(ctx context.Context, contentID string, blockIndex int, sizeBytes int) error
 }
 
+// BlockChecker evaluates whether audio content is blocked by moderation policy.
+type BlockChecker interface {
+	IsBlocked(ctx context.Context, contentID string, payloadHash string) (bool, string, error)
+}
+
 // Fetcher coordinates retrieval of missing audio chunks from the P2P swarm.
 type Fetcher struct {
 	host         *Host
 	blockStore   *storage.BlockStore
 	catalog      CatalogRecorder
 	quotaManager *storage.QuotaManager
+	blockChecker BlockChecker
 }
 
 // NewFetcher creates a new swarm block fetcher.
@@ -41,10 +48,23 @@ func (f *Fetcher) SetQuotaManager(qm *storage.QuotaManager) {
 	f.quotaManager = qm
 }
 
+// SetBlockChecker binds a moderation policy checker to guard against fetching blocked content.
+func (f *Fetcher) SetBlockChecker(bc BlockChecker) {
+	f.blockChecker = bc
+}
+
 // FetchBlock retrieves an audio block by its hash. It first checks the local block store;
 // if absent, it queries connected swarm peers, verifies SHA-256 integrity, stores the block locally,
 // updates the catalog availability record, and returns the raw block bytes.
 func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex int, blockHash string) ([]byte, error) {
+	// Guard: check moderation policy
+	if f.blockChecker != nil {
+		blocked, reason, err := f.blockChecker.IsBlocked(ctx, contentID, "")
+		if err == nil && blocked {
+			return nil, fmt.Errorf("p2p: content is blocked by moderation policy: %s", reason)
+		}
+	}
+
 	// 1. Check local blockstore cache hit
 	if f.blockStore != nil && f.blockStore.Has(blockHash) {
 		data, err := f.blockStore.Get(blockHash)
