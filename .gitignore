@@ -50,8 +50,11 @@ data/keys/
 data/
 data_*/
 experiments/results/
+!experiments/results/
 *.csv
 !tests/fixtures/**/*.csv
+!experiments/results/*.csv
+!experiments/results/*.md
 
 # === Build artifacts ===
 coverage.out
