@@ -1,0 +1,109 @@
+services:
+  node_a:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    container_name: resonamesh_node_a
+    hostname: node-a
+    restart: unless-stopped
+    command: ["--http", "0.0.0.0:8080", "--p2p", "4001", "--data", "/app/data"]
+    environment:
+      - HTTP_ADDR=0.0.0.0:8080
+      - P2P_PORT=4001
+      - DATA_DIR=/app/data
+      - STORAGE_QUOTA_BYTES=5368709120
+      - KEEPER_ENABLED=false
+      - LOG_LEVEL=INFO
+    ports:
+      - "8081:8080"
+      - "4001:4001"
+    volumes:
+      - node_a_data:/app/data
+    networks:
+      resonamesh_net:
+        ipv4_address: 172.28.0.10
+
+  node_b:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    container_name: resonamesh_node_b
+    hostname: node-b
+    restart: unless-stopped
+    command: ["--http", "0.0.0.0:8080", "--p2p", "4002", "--data", "/app/data"]
+    environment:
+      - HTTP_ADDR=0.0.0.0:8080
+      - P2P_PORT=4002
+      - DATA_DIR=/app/data
+      - STORAGE_QUOTA_BYTES=5368709120
+      - KEEPER_ENABLED=false
+      - LOG_LEVEL=INFO
+    ports:
+      - "8082:8080"
+      - "4002:4002"
+    volumes:
+      - node_b_data:/app/data
+    networks:
+      resonamesh_net:
+        ipv4_address: 172.28.0.20
+
+  node_c:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    container_name: resonamesh_node_c
+    hostname: node-c
+    restart: unless-stopped
+    command: ["--http", "0.0.0.0:8080", "--p2p", "4003", "--data", "/app/data"]
+    environment:
+      - HTTP_ADDR=0.0.0.0:8080
+      - P2P_PORT=4003
+      - DATA_DIR=/app/data
+      - STORAGE_QUOTA_BYTES=5368709120
+      - KEEPER_ENABLED=true
+      - LOG_LEVEL=INFO
+    ports:
+      - "8083:8080"
+      - "4003:4003"
+    volumes:
+      - node_c_data:/app/data
+    networks:
+      resonamesh_net:
+        ipv4_address: 172.28.0.30
+
+  node_d:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    container_name: resonamesh_node_d
+    hostname: node-d
+    restart: unless-stopped
+    command: ["--http", "0.0.0.0:8080", "--p2p", "4004", "--data", "/app/data"]
+    environment:
+      - HTTP_ADDR=0.0.0.0:8080
+      - P2P_PORT=4004
+      - DATA_DIR=/app/data
+      - STORAGE_QUOTA_BYTES=5368709120
+      - KEEPER_ENABLED=false
+      - LOG_LEVEL=INFO
+    ports:
+      - "8084:8080"
+      - "4004:4004"
+    volumes:
+      - node_d_data:/app/data
+    networks:
+      resonamesh_net:
+        ipv4_address: 172.28.0.40
+
+networks:
+  resonamesh_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  node_a_data:
+  node_b_data:
+  node_c_data:
+  node_d_data:
