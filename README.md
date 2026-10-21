@@ -92,32 +92,68 @@ Developed as a Bachelor's Thesis in Software Engineering at the Faculty of Infor
    cp .env.example .env
    ```
 
-3. Build and launch the application:
+3. Build the single standalone binary:
    ```bash
-   # Build the frontend assets
-   cd web && npm install && npm run build && cd ..
+   # Using GNU Make
+   make all
 
-   # Run the ResonaMesh node
-   go run ./cmd/resonamesh
+   # Or using PowerShell on Windows
+   .\scripts\build.ps1
    ```
 
-4. Open your browser at `http://127.0.0.1:8080` to access the ResonaMesh player.
+4. Run the standalone binary:
+   ```bash
+   .\resonamesh.exe --http 127.0.0.1:8080 --p2p 4001
+   ```
+
+5. Open your browser at `http://127.0.0.1:8080` to access the ResonaMesh player.
 
 ---
 
-## Multi-Node Local Swarm (Testing)
+## Multi-Node Docker Testbed
 
-To simulate a multi-peer network locally on a single machine:
+A 4-node containerized mesh cluster is available under `deploy/compose/`:
+- **Node A (Publisher / Seeder):** `http://localhost:8081` (P2P: 4001)
+- **Node B (Listener / Consumer):** `http://localhost:8082` (P2P: 4002)
+- **Node C (Keeper / Autonomous Replica):** `http://localhost:8083` (P2P: 4003)
+- **Node D (Network Governance / Moderator):** `http://localhost:8084` (P2P: 4004)
 
 ```bash
-# Terminal 1: Node A (Seeder / Port 8080, P2P 4001)
-go run ./cmd/resonamesh --http 127.0.0.1:8080 --p2p 4001 --data ./tmp/node_a
+# Build and launch all 4 nodes in background
+docker compose -f deploy/compose/docker-compose.yml up --build -d
 
-# Terminal 2: Node B (Leecher / Port 8081, P2P 4002)
-go run ./cmd/resonamesh --http 127.0.0.1:8081 --p2p 4002 --data ./tmp/node_b
+# View live cluster logs
+docker compose -f deploy/compose/docker-compose.yml logs -f
+
+# Teardown cluster and wipe test volumes
+docker compose -f deploy/compose/docker-compose.yml down -v
 ```
 
-Node A and Node B will automatically discover each other via mDNS on the loopback adapter and begin exchanging manifest data.
+---
+
+## Acceptance Testing & Research Benchmarks
+
+### 1. Automated Acceptance Test Suite (T01 — T16)
+Executes all 16 end-to-end integration tests using in-memory loopback libp2p test hosts:
+```bash
+go test -v -count=1 ./tests/integration
+```
+Covers: clean launch, manifest tampering detection, P2P discovery & streaming, multilingual FTS5 catalog search, HTTP Range compliance, cold-cache prefetching, publisher failover, quota & LRU eviction, Keeper replication, abuse report outbox queues, and moderation lifecycles.
+
+### 2. Empirical Research Experiments (E1 — E3)
+Executes scientific trials and outputs raw CSV metrics to `experiments/results/`:
+```bash
+# Run benchmark experiments (E1, E2, E3)
+go run ./cmd/benchmark
+
+# Generate statistical summary analysis
+go run ./experiments/analysis/analyze.go
+```
+- **E1:** Full download (B0) vs Sequential demand (B1) vs Bounded prefetch (B2) (≥ 20 trials per mode).
+- **E2:** Source failure and Keeper replica failover latency (≥ 10 trials).
+- **E3:** Network partition healing and cryptographic moderation convergence (≥ 10 trials).
+
+Detailed findings are documented in [experiments/results/analysis_summary.md](experiments/results/analysis_summary.md) and [docs/THESIS_COMPLIANCE.md](docs/THESIS_COMPLIANCE.md).
 
 ---
 
@@ -126,55 +162,39 @@ Node A and Node B will automatically discover each other via mDNS on the loopbac
 ```
 .
 ├── cmd/
+│   ├── benchmark/           # E1-E3 benchmark execution CLI
 │   └── resonamesh/          # Application entry point (main.go)
+├── deploy/
+│   └── compose/             # 4-node Docker Compose testbed & Dockerfile
+├── docs/                    # Thesis compliance matrix and architecture docs
+├── experiments/
+│   ├── analysis/            # Statistical aggregation scripts
+│   └── results/             # Raw CSV datasets (E1, E2, E3) and summary
 ├── internal/
-│   ├── api/                 # Local HTTP server, REST endpoints, SSE broker
-│   ├── audio/               # Audio chunking, SHA-256 hashing, range streaming
-│   ├── p2p/                 # libp2p host configuration, mDNS discovery, protocols
-│   └── storage/             # SQLite store, FTS5 catalog, block cache manager
+│   ├── api/                 # Local HTTP server, REST endpoints, web embed
+│   ├── catalog/             # SQLite + FTS5 catalog and availability tracking
+│   ├── config/              # CLI and environment variable configuration
+│   ├── importer/            # MP3 chunking, licensing, manifest generation
+│   ├── moderation/          # Policy engine, outbox, receipt & decision log
+│   ├── p2p/                 # libp2p host, wire protocols, syncer, fetcher, keeper
+│   ├── player/              # HTTP Range streaming adapter & active tracking
+│   └── storage/             # Content-addressed blockstore & LRU quota manager
 ├── pkg/
-│   ├── crypto/              # Ed25519 key signing and verification utilities
-│   └── protocol/            # Wire protocol descriptors, constants, and packet schemas
-├── web/                     # React + TypeScript frontend source code
-│   ├── src/
-│   │   ├── features/        # Feature-driven slices (player, library, network)
-│   │   └── shared/          # Reusable components, hooks, and design system
-│   └── vite.config.ts       # Vite bundler configuration
+│   ├── crypto/              # Ed25519 signatures, domains, SHA-256 chunk hashing
+│   └── protocol/            # Wire protocol constants, canonical serializers
+├── tests/
+│   └── integration/         # T01-T16 automated acceptance test suite
+├── web/                     # React 19 + TypeScript DAW-grade frontend
+│   └── dist/                # Pre-compiled static assets embedded in Go binary
+├── Makefile                 # Automation build targets
 ├── .env.example             # Configuration template
-├── .gitignore               # Tracked git exclusions
 └── README.md                # Project documentation
 ```
-
----
-
-## Verification & Testing
-
-ResonaMesh follows strict test-driven and specification-first engineering standards:
-
-```bash
-# Run all Go unit and integration tests
-go test -v -race ./...
-
-# Run static analysis
-go vet ./...
-
-# Typecheck frontend
-cd web && npm run build
-```
-
----
-
-## Contributing
-
-Contributions and pull requests are welcome. When contributing:
-- Ensure all commit messages adhere to [Conventional Commits](https://www.conventionalcommits.org/).
-- Verify that code formatting adheres to standard `gofmt` and passes `go vet ./...`.
-- Ensure all existing and new unit tests pass with `go test ./...`.
-
 
 ---
 
 ## License
 
 This project is licensed under the GNU General Public License v3.0 — see the [LICENSE](LICENSE) file for details.
+
 
