@@ -30,6 +30,7 @@ type Config struct {
 	LogLevel               string
 	NATPortMapEnabled      bool
 	BootstrapSeeds         []string
+	AllowInsecureHTTP      bool
 }
 
 // DefaultConfig returns safe, preconfigured embedded fallback settings.
@@ -43,6 +44,7 @@ func DefaultConfig() *Config {
 		TrustedModeratorPubKey: "",
 		LogLevel:               "INFO",
 		NATPortMapEnabled:      true,
+		AllowInsecureHTTP:      false,
 	}
 }
 
@@ -100,6 +102,9 @@ func Load(envPath string, args []string) (*Config, error) {
 	} else if val := os.Getenv("RESONAMESH_BOOTSTRAP_PEERS"); val != "" {
 		cfg.BootstrapSeeds = parseSeedsString(val)
 	}
+	if val := os.Getenv("RESONAMESH_ALLOW_INSECURE_HTTP"); val != "" {
+		cfg.AllowInsecureHTTP = strings.EqualFold(val, "true") || val == "1"
+	}
 
 	// 4. Override with CLI Flags if provided
 	if len(args) > 0 {
@@ -111,6 +116,7 @@ func Load(envPath string, args []string) (*Config, error) {
 		flagKeeper := fs.Bool("keeper", false, "Enable automatic background replication")
 		flagNATPortMap := fs.Bool("nat-port-map", cfg.NATPortMapEnabled, "Enable automatic router port mapping via UPnP / NAT-PMP")
 		flagBootstrap := fs.String("bootstrap", "", "Comma-separated bootstrap multiaddrs or HTTP(S) endpoint URLs")
+		flagInsecureHTTP := fs.Bool("allow-insecure-http", cfg.AllowInsecureHTTP, "Allow HTTP server to bind to non-loopback addresses (container/server environments)")
 
 		if err := fs.Parse(args); err != nil {
 			return nil, err
@@ -135,13 +141,16 @@ func Load(envPath string, args []string) (*Config, error) {
 			cfg.BootstrapSeeds = parseSeedsString(*flagBootstrap)
 		}
 		fs.Visit(func(f *flag.Flag) {
-			if f.Name == "nat-port-map" {
+			switch f.Name {
+			case "nat-port-map":
 				cfg.NATPortMapEnabled = *flagNATPortMap
+			case "allow-insecure-http":
+				cfg.AllowInsecureHTTP = *flagInsecureHTTP
 			}
 		})
 	}
 
-	// 4. Validate configuration bounds
+	// 5. Validate configuration bounds
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -156,9 +165,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: invalid HTTP address: %w", err)
 	}
 
-	// Enforce loopback binding: 04-security-moderation.md §3 forbids 0.0.0.0
+	// Enforce loopback binding: 04-security-moderation.md §3 forbids 0.0.0.0 for desktop UI,
+	// but permits explicit opt-in for containerized / headless server deployments.
 	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
-		return ErrInsecureHTTPBind
+		if !c.AllowInsecureHTTP {
+			return ErrInsecureHTTPBind
+		}
 	}
 
 	if c.P2PPort < 1 || c.P2PPort > 65535 {
