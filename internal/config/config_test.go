@@ -24,6 +24,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.StorageQuotaBytes != 5*1024*1024*1024 {
 		t.Errorf("expected default quota 5 GiB, got %d", cfg.StorageQuotaBytes)
 	}
+	if !cfg.NATPortMapEnabled {
+		t.Errorf("expected default NATPortMapEnabled to be true, got %v", cfg.NATPortMapEnabled)
+	}
 }
 
 func TestSecurityRejectionNonLoopback(t *testing.T) {
@@ -64,7 +67,7 @@ func TestThreeTierPrecedence(t *testing.T) {
 	}
 
 	// 2. CLI flags override .env values
-	flags := []string{"--http", "127.0.0.1:9090", "--p2p", "6001"}
+	flags := []string{"--http", "127.0.0.1:9090", "--p2p", "6001", "--nat-port-map=false"}
 	cfgWithFlags, err := config.Load(envFile, flags)
 	if err != nil {
 		t.Fatalf("failed to load config with flags: %v", err)
@@ -74,5 +77,8 @@ func TestThreeTierPrecedence(t *testing.T) {
 	}
 	if cfgWithFlags.P2PPort != 6001 {
 		t.Errorf("expected CLI flag override 6001, got %d", cfgWithFlags.P2PPort)
+	}
+	if cfgWithFlags.NATPortMapEnabled {
+		t.Errorf("expected CLI flag override false for NATPortMapEnabled, got %v", cfgWithFlags.NATPortMapEnabled)
 	}
 }

@@ -23,9 +23,10 @@ var (
 
 // HostConfig holds networking configuration for the libp2p host.
 type HostConfig struct {
-	ListenAddr   string
-	PrivateKey   ed25519.PrivateKey
-	DisableRelay bool
+	ListenAddr       string
+	PrivateKey       ed25519.PrivateKey
+	DisableRelay     bool
+	EnableNATPortMap bool
 }
 
 // Host wraps the libp2p Host instance providing lifecycle and identity operations.
@@ -56,6 +57,9 @@ func NewHost(cfg HostConfig) (*Host, error) {
 
 	if cfg.DisableRelay {
 		opts = append(opts, libp2p.DisableRelay())
+	}
+	if cfg.EnableNATPortMap {
+		opts = append(opts, libp2p.NATPortMap())
 	}
 
 	rawHost, err := libp2p.New(opts...)
