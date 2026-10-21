@@ -82,3 +82,32 @@ func TestThreeTierPrecedence(t *testing.T) {
 		t.Errorf("expected CLI flag override false for NATPortMapEnabled, got %v", cfgWithFlags.NATPortMapEnabled)
 	}
 }
+
+func TestBootstrapSeedsConfiguration(t *testing.T) {
+	// 1. Env variable with comma-separated list
+	t.Setenv("RESONAMESH_BOOTSTRAP_SEEDS", "https://gist.github.com/test/raw, /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWtest")
+	cfgEnv, err := config.Load("", nil)
+	if err != nil {
+		t.Fatalf("failed to load config with env seeds: %v", err)
+	}
+	if len(cfgEnv.BootstrapSeeds) != 2 {
+		t.Fatalf("expected 2 bootstrap seeds from env, got %d", len(cfgEnv.BootstrapSeeds))
+	}
+	if cfgEnv.BootstrapSeeds[0] != "https://gist.github.com/test/raw" {
+		t.Errorf("unexpected seed 0: %s", cfgEnv.BootstrapSeeds[0])
+	}
+	if cfgEnv.BootstrapSeeds[1] != "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWtest" {
+		t.Errorf("unexpected seed 1: %s", cfgEnv.BootstrapSeeds[1])
+	}
+
+	// 2. CLI flag override
+	cliArgs := []string{"--bootstrap", `["https://override.gist.com/raw"]`}
+	cfgCLI, err := config.Load("", cliArgs)
+	if err != nil {
+		t.Fatalf("failed to load config with CLI seeds: %v", err)
+	}
+	if len(cfgCLI.BootstrapSeeds) != 1 || cfgCLI.BootstrapSeeds[0] != "https://override.gist.com/raw" {
+		t.Fatalf("expected CLI flag override, got: %+v", cfgCLI.BootstrapSeeds)
+	}
+}
+
