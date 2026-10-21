@@ -15,6 +15,8 @@ export interface NodeStatus {
   total_tracks: number;
   connected_peers?: number;
   uptime_seconds: number;
+  peer_id?: string;
+  listen_addrs?: string[];
 }
 
 export interface StorageUsage {

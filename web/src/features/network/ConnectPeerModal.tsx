@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Radio, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { Radio, CheckCircle2, AlertCircle, Loader2, Copy, Check, Share2 } from 'lucide-react';
 import { Modal } from '../../shared/components/Modal';
 import { Button } from '../../shared/components/Button';
 import { apiClient } from '../../shared/api/client';
+import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
 
 interface ConnectPeerModalProps {
   isOpen: boolean;
@@ -15,10 +16,21 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
   onClose,
   onConnected,
 }) => {
+  const { status } = useNodeStatus();
   const [multiaddr, setMultiaddr] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successPeerID, setSuccessPeerID] = useState<string | null>(null);
+  const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
+
+  const dialableAddrs = (status?.listen_addrs || []).filter(Boolean);
+  const primaryAddr = dialableAddrs.find((a) => !a.includes('/127.0.0.1/') && !a.includes('/169.254.')) || dialableAddrs[0];
+
+  const handleCopy = (addr: string) => {
+    navigator.clipboard.writeText(addr);
+    setCopiedAddr(addr);
+    setTimeout(() => setCopiedAddr(null), 2500);
+  };
 
   const resetState = () => {
     setMultiaddr('');
@@ -64,6 +76,105 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title="Connect to Swarm Peer">
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        {/* Your Multiaddress Sharing Section */}
+        <div
+          style={{
+            padding: '14px',
+            backgroundColor: 'rgba(255, 255, 255, 0.03)',
+            border: '1px solid var(--border-glass)',
+            borderRadius: 'var(--radius-md)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Share2 size={14} style={{ color: 'var(--accent-sky)' }} />
+              Ваша адреса для прямого підключення (Share):
+            </span>
+            {primaryAddr && (
+              <button
+                type="button"
+                onClick={() => handleCopy(primaryAddr)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  background: copiedAddr === primaryAddr ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                  border: copiedAddr === primaryAddr ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '3px 8px',
+                  color: copiedAddr === primaryAddr ? 'var(--accent-emerald)' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  fontSize: '0.75rem',
+                  fontWeight: 500,
+                  transition: 'all 0.2s',
+                }}
+              >
+                {copiedAddr === primaryAddr ? <Check size={12} /> : <Copy size={12} />}
+                {copiedAddr === primaryAddr ? 'Скопійовано!' : 'Копіювати'}
+              </button>
+            )}
+          </div>
+
+          {dialableAddrs.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
+              {dialableAddrs.map((addr) => {
+                const isCopied = copiedAddr === addr;
+                return (
+                  <div
+                    key={addr}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '8px',
+                      padding: '6px 10px',
+                      backgroundColor: 'var(--bg-card)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid rgba(255, 255, 255, 0.05)',
+                    }}
+                  >
+                    <code
+                      style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.73rem',
+                        color: 'var(--text-secondary)',
+                        wordBreak: 'break-all',
+                        userSelect: 'all',
+                      }}
+                    >
+                      {addr}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(addr)}
+                      title="Копіювати цю адресу"
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: '4px',
+                        cursor: 'pointer',
+                        color: isCopied ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {isCopied ? <Check size={14} /> : <Copy size={14} />}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              {status?.peer_id ? `Peer ID: ${status.peer_id}` : 'Адреса вузла визначається...'}
+            </span>
+          )}
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+            Надішліть цю адресу іншому користувачу, щоб він вставив її нижче для прямого з'єднання.
+          </span>
+        </div>
         {error && (
           <div
             style={{

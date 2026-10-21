@@ -502,6 +502,15 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var p2pPeerID string
+	listenAddrs := []string{}
+	if s.p2pHost != nil {
+		p2pPeerID = s.p2pHost.ID().String()
+		for _, ma := range s.p2pHost.Addrs() {
+			listenAddrs = append(listenAddrs, fmt.Sprintf("%s/p2p/%s", ma.String(), p2pPeerID))
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"version":             AppVersion,
 		"publisher_key":       pubKeyHex,
@@ -511,6 +520,8 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		"total_tracks":        totalTracks,
 		"connected_peers":     connectedPeers,
 		"uptime_seconds":      int64(time.Since(s.startTime).Seconds()),
+		"peer_id":             p2pPeerID,
+		"listen_addrs":        listenAddrs,
 	})
 }
 
