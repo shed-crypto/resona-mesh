@@ -19,6 +19,7 @@ import (
 	"resonamesh/internal/importer"
 	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
+	"resonamesh/internal/storage"
 	"resonamesh/pkg/crypto"
 	"resonamesh/pkg/protocol"
 	"resonamesh/web"
@@ -39,6 +40,8 @@ type Server struct {
 	streamer     *player.Streamer
 	peerTracker  *p2p.PeerTracker
 	syncer       Syncer
+	quotaManager *storage.QuotaManager
+	p2pHost      *p2p.Host
 	publisherKey ed25519.PrivateKey
 	startTime    time.Time
 	mux          *http.ServeMux
@@ -108,16 +111,31 @@ func (s *Server) SetSyncer(sy Syncer) {
 	s.syncer = sy
 }
 
+// SetQuotaManager binds the storage quota manager to expose disk metrics.
+func (s *Server) SetQuotaManager(qm *storage.QuotaManager) {
+	s.quotaManager = qm
+}
+
+// SetP2PHost binds the libp2p host instance for manual peer dialing.
+func (s *Server) SetP2PHost(h *p2p.Host) {
+	s.p2pHost = h
+}
+
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tracks", s.handleListTracks)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}", s.handleGetTrack)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}/manifest", s.handleGetManifest)
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/pin", s.handlePinTrack)
+	s.mux.HandleFunc("POST /api/v1/tracks/{id}/unpin", s.handleUnpinTrack)
 	s.mux.HandleFunc("DELETE /api/v1/tracks/{id}", s.handleDeleteTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/import", s.handleImportTrack)
 	s.mux.HandleFunc("GET /api/v1/stream/{id}", s.handleStream)
 	s.mux.HandleFunc("GET /api/v1/peers", s.handleListPeers)
+	s.mux.HandleFunc("POST /api/v1/peers/connect", s.handleConnectPeer)
 	s.mux.HandleFunc("POST /api/v1/peers/sync", s.handleSyncPeers)
+	s.mux.HandleFunc("GET /api/v1/storage", s.handleGetStorage)
+	s.mux.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
+	s.mux.HandleFunc("PUT /api/v1/settings", s.handleUpdateSettings)
 	s.mux.HandleFunc("GET /api/v1/node/status", s.handleNodeStatus)
 
 	if webHandler, err := web.DistHandler(); err == nil {
@@ -206,7 +224,7 @@ func (s *Server) handleGetManifest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, manifest)
 }
 
-// handlePinTrack toggles or sets the local pinning status of a track.
+// handlePinTrack toggles or sets the local pinning status of a track with storage quota validation.
 func (s *Server) handlePinTrack(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -222,6 +240,29 @@ func (s *Server) handlePinTrack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	track, err := s.catalog.GetTrack(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to query track")
+		return
+	}
+
+	if req.Pinned && s.quotaManager != nil && track.AvailabilityPct < 100.0 {
+		missingBytes := int64((100.0 - track.AvailabilityPct) / 100.0 * float64(track.TotalSizeBytes))
+		if missingBytes <= 0 {
+			missingBytes = int64(protocol.BlockSize)
+		}
+		tok, err := s.quotaManager.Reserve(r.Context(), missingBytes)
+		if err != nil {
+			writeJSONError(w, http.StatusConflict, "insufficient storage quota to pin track")
+			return
+		}
+		s.quotaManager.Release(tok)
+	}
+
 	if err := s.catalog.SetPinned(r.Context(), id, req.Pinned); err != nil {
 		if errors.Is(err, catalog.ErrTrackNotFound) {
 			writeJSONError(w, http.StatusNotFound, "track not found")
@@ -234,6 +275,29 @@ func (s *Server) handlePinTrack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"content_id": id,
 		"pinned":     req.Pinned,
+	})
+}
+
+// handleUnpinTrack unpins a track, permitting its cached blocks to be evicted under storage pressure.
+func (s *Server) handleUnpinTrack(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	if err := s.catalog.SetPinned(r.Context(), id, false); err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to unpin track")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"content_id": id,
+		"pinned":     false,
 	})
 }
 
@@ -425,6 +489,107 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		"total_tracks":        totalTracks,
 		"connected_peers":     connectedPeers,
 		"uptime_seconds":      int64(time.Since(s.startTime).Seconds()),
+	})
+}
+
+// handleConnectPeer connects to a remote peer via an explicitly supplied multiaddress string.
+func (s *Server) handleConnectPeer(w http.ResponseWriter, r *http.Request) {
+	if s.p2pHost == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "p2p host not initialized")
+		return
+	}
+
+	var req struct {
+		Addr string `json:"addr"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Addr) == "" {
+		writeJSONError(w, http.StatusBadRequest, "peer multiaddr is required")
+		return
+	}
+
+	addrInfo, err := peer.AddrInfoFromString(strings.TrimSpace(req.Addr))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid multiaddr: %v", err))
+		return
+	}
+
+	dialCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if err := s.p2pHost.Connect(dialCtx, *addrInfo); err != nil {
+		writeJSONError(w, http.StatusBadGateway, fmt.Sprintf("failed to connect to peer: %v", err))
+		return
+	}
+
+	slog.Info("Successfully connected to peer via manual multiaddr", "peer_id", addrInfo.ID.String())
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "connected",
+		"peer_id": addrInfo.ID.String(),
+	})
+}
+
+// handleGetStorage returns detailed storage quota utilization metrics.
+func (s *Server) handleGetStorage(w http.ResponseWriter, r *http.Request) {
+	if s.quotaManager == nil {
+		totalTracks, storedBytes, _ := s.catalog.Stats(r.Context())
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"quota_bytes":     s.cfg.StorageQuotaBytes,
+			"stored_bytes":    storedBytes,
+			"reserved_bytes":  0,
+			"available_bytes": s.cfg.StorageQuotaBytes - storedBytes,
+			"total_tracks":    totalTracks,
+		})
+		return
+	}
+
+	usage, err := s.quotaManager.Usage(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to query storage quota")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, usage)
+}
+
+// handleGetSettings returns configurable node daemon parameters.
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"storage_quota_bytes": s.cfg.StorageQuotaBytes,
+		"keeper_enabled":      s.cfg.KeeperEnabled,
+		"p2p_port":            s.cfg.P2PPort,
+		"http_addr":           s.cfg.HTTPAddr,
+	})
+}
+
+// handleUpdateSettings dynamically adjusts configurable node daemon settings.
+func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StorageQuotaBytes *int64 `json:"storage_quota_bytes"`
+		KeeperEnabled     *bool  `json:"keeper_enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json payload")
+		return
+	}
+
+	if req.StorageQuotaBytes != nil {
+		if *req.StorageQuotaBytes <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "storage quota must be greater than zero")
+			return
+		}
+		s.cfg.StorageQuotaBytes = *req.StorageQuotaBytes
+		if s.quotaManager != nil {
+			s.quotaManager.SetQuotaBytes(*req.StorageQuotaBytes)
+		}
+	}
+
+	if req.KeeperEnabled != nil {
+		s.cfg.KeeperEnabled = *req.KeeperEnabled
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"storage_quota_bytes": s.cfg.StorageQuotaBytes,
+		"keeper_enabled":      s.cfg.KeeperEnabled,
 	})
 }
 

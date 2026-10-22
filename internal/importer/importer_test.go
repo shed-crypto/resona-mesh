@@ -224,3 +224,42 @@ func TestImporterDuplicateRejection(t *testing.T) {
 		t.Fatalf("expected ErrTrackAlreadyExists, got: %v", err)
 	}
 }
+
+func TestImporterQuotaEnforcement(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	db, _ := storage.Open(filepath.Join(tmpDir, "test.db"))
+	defer db.Close()
+	bs, _ := storage.NewBlockStore(tmpDir)
+
+	// Set small quota of 100 KiB
+	qm := storage.NewQuotaManager(100*1024, tmpDir, db, bs, nil)
+
+	imp := importer.NewImporter(bs, db)
+	imp.SetQuotaManager(qm)
+
+	_, privKey, _ := crypto.GenerateKeyPair()
+	// Audio size is 300 KiB -> exceeds 100 KiB quota
+	sampleAudio := make([]byte, 300*1024)
+
+	params := importer.ImportParams{
+		Title:        "Oversized Track",
+		Artist:       "Artist",
+		LicenseCode:  protocol.LicenseCC0,
+		PublisherKey: privKey,
+		AudioData:    bytes.NewReader(sampleAudio),
+	}
+
+	_, err := imp.Import(ctx, params)
+	if err == nil {
+		t.Fatal("expected import to fail due to quota limit, got nil error")
+	}
+
+	// Verify no tracks or blocks remained in storage
+	var trackCount int
+	_ = db.Raw().QueryRowContext(ctx, "SELECT COUNT(*) FROM tracks").Scan(&trackCount)
+	if trackCount != 0 {
+		t.Fatalf("expected 0 tracks in db after failed import, got: %d", trackCount)
+	}
+}
