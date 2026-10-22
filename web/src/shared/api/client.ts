@@ -1,5 +1,5 @@
 import type { Track, Manifest, TrackListResponse } from '../../types/track';
-import type { NodeStatus } from '../../types/node';
+import type { NodeStatus, PeerRecord } from '../../types/node';
 
 const API_BASE = '/api/v1';
 
@@ -77,6 +77,24 @@ export const apiClient = {
     const res = await fetch(`${API_BASE}/node/status`);
     if (!res.ok) {
       throw new Error(`Failed to fetch node status: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async getPeers(): Promise<{ peers: PeerRecord[]; total: number }> {
+    const res = await fetch(`${API_BASE}/peers`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch peers: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async syncPeers(): Promise<{ status: string; imported_tracks: number }> {
+    const res = await fetch(`${API_BASE}/peers/sync`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to sync peers: ${res.statusText}`);
     }
     return res.json();
   },

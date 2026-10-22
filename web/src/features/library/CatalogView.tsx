@@ -12,12 +12,14 @@ interface CatalogViewProps {
   currentTrack: Track | null;
   isPlaying: boolean;
   onPlayTrack: (track: Track) => void;
+  onTogglePlay?: () => void;
 }
 
 export const CatalogView: React.FC<CatalogViewProps> = ({
   currentTrack,
   isPlaying,
   onPlayTrack,
+  onTogglePlay,
 }) => {
   const {
     tracks,
@@ -181,7 +183,13 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               track={track}
               isActiveTrack={currentTrack?.content_id === track.content_id}
               isPlaying={isPlaying}
-              onPlay={() => onPlayTrack(track)}
+              onPlay={() => {
+                if (currentTrack?.content_id === track.content_id && onTogglePlay) {
+                  onTogglePlay();
+                } else {
+                  onPlayTrack(track);
+                }
+              }}
               onTogglePin={() => togglePin(track.content_id, track.pinned)}
               onDelete={() => deleteTrack(track.content_id)}
             />
