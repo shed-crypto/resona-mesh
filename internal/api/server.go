@@ -18,6 +18,7 @@ import (
 	"resonamesh/internal/player"
 	"resonamesh/pkg/crypto"
 	"resonamesh/pkg/protocol"
+	"resonamesh/web"
 )
 
 const AppVersion = "0.1.0-alpha"
@@ -96,6 +97,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/tracks/import", s.handleImportTrack)
 	s.mux.HandleFunc("GET /api/v1/stream/{id}", s.handleStream)
 	s.mux.HandleFunc("GET /api/v1/node/status", s.handleNodeStatus)
+
+	if webHandler, err := web.DistHandler(); err == nil {
+		s.mux.Handle("/", webHandler)
+	}
 }
 
 // handleListTracks returns paginated tracks with optional search and pin filters.
