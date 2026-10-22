@@ -153,7 +153,7 @@ func main() {
 	hostConfig := p2p.HostConfig{
 		PrivateKey:         privKey,
 		DisableRelay:       cfg.DisableRelay,
-		EnableRelayService: cfg.Headless,
+		EnableRelayService: cfg.Headless && !cfg.DisableRelay,
 		EnableNATPortMap:   cfg.NATPortMapEnabled,
 	}
 
