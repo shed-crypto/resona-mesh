@@ -151,6 +151,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	s.mux.HandleFunc("PUT /api/v1/settings", s.handleUpdateSettings)
 	s.mux.HandleFunc("GET /api/v1/node/status", s.handleNodeStatus)
+	s.mux.HandleFunc("GET /api/v1/seeds", s.handleSeeds)
 	s.mux.HandleFunc("POST /api/v1/reports", s.handleSubmitReport)
 	s.mux.HandleFunc("GET /api/v1/reports", s.handleListReports)
 	s.mux.HandleFunc("GET /api/v1/moderation/decisions", s.handleListDecisions)
@@ -565,6 +566,28 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		"peer_id":             p2pPeerID,
 		"listen_addrs":        listenAddrs,
 	})
+}
+
+// handleSeeds returns an array of public multiaddresses for this node as a dynamic bootstrap endpoint.
+func (s *Server) handleSeeds(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Content-Type", "application/json")
+
+	if s.p2pHost == nil {
+		_ = json.NewEncoder(w).Encode([]string{})
+		return
+	}
+
+	hostHeader := r.Host
+	hostname, _, err := net.SplitHostPort(hostHeader)
+	if err != nil {
+		hostname = hostHeader
+	}
+
+	peerID := s.p2pHost.ID().String()
+	wanAddr := fmt.Sprintf("/dns4/%s/tcp/443/wss/p2p/%s", hostname, peerID)
+	_ = json.NewEncoder(w).Encode([]string{wanAddr})
 }
 
 // handleConnectPeer connects to a remote peer via an explicitly supplied multiaddress string.
