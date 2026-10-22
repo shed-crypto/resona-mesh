@@ -291,6 +291,20 @@ func (c *Catalog) DeleteTrack(ctx context.Context, contentID string) error {
 	return nil
 }
 
+// Stats returns total number of tracks and sum of stored block bytes.
+func (c *Catalog) Stats(ctx context.Context) (totalTracks int, storedBytes int64, err error) {
+	row := c.db.Raw().QueryRowContext(ctx, `
+		SELECT 
+			(SELECT COUNT(*) FROM tracks),
+			COALESCE((SELECT SUM(size_bytes) FROM blocks WHERE is_stored = 1), 0)`)
+	err = row.Scan(&totalTracks, &storedBytes)
+	if err != nil {
+		return 0, 0, fmt.Errorf("catalog: failed to query stats: %w", err)
+	}
+	return totalTracks, storedBytes, nil
+}
+
+
 // sanitizeFTSQuery prepares a user query for safe SQLite FTS5 MATCH execution with wildcard suffix.
 func sanitizeFTSQuery(term string) string {
 	cleaned := strings.Map(func(r rune) rune {
