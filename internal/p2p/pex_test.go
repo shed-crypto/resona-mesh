@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"resonamesh/pkg/crypto"
+
+	"github.com/multiformats/go-multiaddr"
 )
 
 func TestPeerExchangeDiscovery(t *testing.T) {
@@ -91,5 +93,53 @@ func TestPeerExchangeDiscovery(t *testing.T) {
 	}
 	if !hasClientA {
 		t.Fatalf("expected Client B to have active connection with Client A, got peers: %v", peersB)
+	}
+}
+
+func TestTransportTailExtractionAndDeduplication(t *testing.T) {
+	tcpAddr, err := multiaddr.NewMultiaddr("/ip4/192.168.1.10/tcp/4001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quicAddr, err := multiaddr.NewMultiaddr("/ip4/10.0.0.5/udp/4001/quic-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tcpTail := extractTransportTail(tcpAddr)
+	if tcpTail == nil || tcpTail.String() != "/tcp/4001" {
+		t.Fatalf("expected /tcp/4001, got %v", tcpTail)
+	}
+
+	quicTail := extractTransportTail(quicAddr)
+	if quicTail == nil || quicTail.String() != "/udp/4001/quic-v1" {
+		t.Fatalf("expected /udp/4001/quic-v1, got %v", quicTail)
+	}
+
+	publicIP, err := multiaddr.NewMultiaddr("/ip4/93.180.12.34")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	synthesizedTCP := publicIP.Encapsulate(tcpTail)
+	if synthesizedTCP.String() != "/ip4/93.180.12.34/tcp/4001" {
+		t.Fatalf("expected synthesized TCP address, got %s", synthesizedTCP.String())
+	}
+
+	synthesizedQUIC := publicIP.Encapsulate(quicTail)
+	if synthesizedQUIC.String() != "/ip4/93.180.12.34/udp/4001/quic-v1" {
+		t.Fatalf("expected synthesized QUIC address, got %s", synthesizedQUIC.String())
+	}
+
+	// Test deduplication
+	dupList := []multiaddr.Multiaddr{
+		synthesizedTCP,
+		synthesizedTCP,
+		synthesizedQUIC,
+		synthesizedQUIC,
+	}
+	deduped := deduplicateMultiaddrs(dupList)
+	if len(deduped) != 2 {
+		t.Fatalf("expected 2 unique addresses, got %d", len(deduped))
 	}
 }

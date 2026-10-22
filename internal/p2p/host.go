@@ -17,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	libp2pws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
+	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 	circuitclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	circuitrelay "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/multiformats/go-multiaddr"
@@ -67,6 +68,7 @@ func NewHost(cfg HostConfig) (*Host, error) {
 		libp2p.Identity(p2pPrivKey),
 		libp2p.ListenAddrStrings(listenAddrs...),
 		libp2p.Transport(libp2ptcp.NewTCPTransport),
+		libp2p.Transport(libp2pquic.NewTransport),
 		libp2p.Security(noise.ID, noise.New),
 	}
 
