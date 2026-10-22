@@ -1,0 +1,53 @@
+# === Go ===
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# === Node / Web ===
+web/node_modules/
+web/dist/
+web/.vite/
+web/.cache/
+.npm
+*.tsbuildinfo
+
+# === SQLite ===
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === Keys (NEVER commit private keys) ===
+*.pem
+*.key
+data/keys/
+
+# === Test/Experiment data ===
+data/
+experiments/results/
+*.csv
+!tests/fixtures/**/*.csv
+
+# === Build artifacts ===
+coverage.out
+coverage.html
+__debug_bin*
