@@ -37,6 +37,18 @@ func TestSecurityRejectionNonLoopback(t *testing.T) {
 	}
 }
 
+func TestOptInNonLoopbackForContainers(t *testing.T) {
+	// CLI flag opt-in
+	args := []string{"--http", "0.0.0.0:8080", "--allow-insecure-http"}
+	cfg, err := config.Load("", args)
+	if err != nil {
+		t.Fatalf("expected successful bind with explicit --allow-insecure-http, got: %v", err)
+	}
+	if cfg.HTTPAddr != "0.0.0.0:8080" {
+		t.Errorf("expected 0.0.0.0:8080, got %s", cfg.HTTPAddr)
+	}
+}
+
 func TestInvalidPortBounds(t *testing.T) {
 	args := []string{"--p2p", "70000"}
 	_, err := config.Load("", args)
