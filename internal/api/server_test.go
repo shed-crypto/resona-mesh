@@ -529,5 +529,213 @@ func TestAPIPeersEndpoint(t *testing.T) {
 	}
 }
 
+func createTestAPIServer(t *testing.T) (*api.Server, string) {
+	t.Helper()
+	tempDir := t.TempDir()
+	db, err := storage.Open(filepath.Join(tempDir, "catalog.db"))
+	if err != nil {
+		t.Fatalf("failed to open test sqlite db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	bs, err := storage.NewBlockStore(tempDir)
+	if err != nil {
+		t.Fatalf("failed to init blockstore: %v", err)
+	}
+
+	cat := catalog.New(db, bs)
+	imp := importer.NewImporter(bs, db)
+	str := player.NewStreamer(cat, bs)
+
+	_, priv, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate node key: %v", err)
+	}
+
+	cfg := &config.Config{
+		HTTPAddr:          "127.0.0.1:0",
+		P2PPort:           4001,
+		DataDir:           tempDir,
+		StorageQuotaBytes: 10 * 1024 * 1024,
+	}
+
+	server := api.NewServer(cfg, cat, imp, str, priv)
+	return server, tempDir
+}
+
+func TestStorageAndSettingsEndpoints(t *testing.T) {
+	server, tmpDir := createTestAPIServer(t)
+	db, _ := storage.Open(filepath.Join(tmpDir, "catalog.db"))
+	defer db.Close()
+	bs, _ := storage.NewBlockStore(tmpDir)
+	qm := storage.NewQuotaManager(5*1024*1024, tmpDir, db, bs, nil)
+	server.SetQuotaManager(qm)
+
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	// 1. GET /api/v1/storage
+	resp, err := http.Get(ts.URL + "/api/v1/storage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/v1/storage, got %d", resp.StatusCode)
+	}
+
+	var usage storage.UsageStats
+	if err := json.NewDecoder(resp.Body).Decode(&usage); err != nil {
+		t.Fatal(err)
+	}
+	if usage.QuotaBytes != 5*1024*1024 {
+		t.Fatalf("expected quota 5 MiB, got %d", usage.QuotaBytes)
+	}
+
+	// 2. GET /api/v1/settings
+	resp2, err := http.Get(ts.URL + "/api/v1/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/v1/settings, got %d", resp2.StatusCode)
+	}
+
+	// 3. PUT /api/v1/settings
+	newQuota := int64(8 * 1024 * 1024)
+	newKeeper := true
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"storage_quota_bytes": newQuota,
+		"keeper_enabled":      newKeeper,
+	})
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	putResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer putResp.Body.Close()
+
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for PUT /api/v1/settings, got %d", putResp.StatusCode)
+	}
+
+	if qm.QuotaBytes() != newQuota {
+		t.Fatalf("expected quota updated in qm to %d, got %d", newQuota, qm.QuotaBytes())
+	}
+}
+
+func TestPinAndUnpinEndpoints(t *testing.T) {
+	server, _ := createTestAPIServer(t)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	// 1. Import a track first
+	sampleAudio := make([]byte, 100*1024)
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	_ = writer.WriteField("title", "Pin Test Track")
+	_ = writer.WriteField("artist", "Sound Artist")
+	_ = writer.WriteField("license_code", protocol.LicenseCC0)
+	part, _ := writer.CreateFormFile("audio_file", "sample.mp3")
+	_, _ = part.Write(sampleAudio)
+	_ = writer.Close()
+
+	uploadResp, err := http.Post(ts.URL+"/api/v1/tracks/import", writer.FormDataContentType(), &buf)
+	if err != nil || uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("import failed: status %d (err: %v)", uploadResp.StatusCode, err)
+	}
+	var created struct {
+		ContentID string `json:"content_id"`
+	}
+	_ = json.NewDecoder(uploadResp.Body).Decode(&created)
+	uploadResp.Body.Close()
+
+	// 2. Pin track via POST /api/v1/tracks/{id}/pin
+	pinBody, _ := json.Marshal(map[string]bool{"pinned": true})
+	pinResp, err := http.Post(ts.URL+"/api/v1/tracks/"+created.ContentID+"/pin", "application/json", bytes.NewReader(pinBody))
+	if err != nil || pinResp.StatusCode != http.StatusOK {
+		t.Fatalf("pin failed: status %d (err: %v)", pinResp.StatusCode, err)
+	}
+	pinResp.Body.Close()
+
+	// 3. Unpin track via POST /api/v1/tracks/{id}/unpin
+	unpinResp, err := http.Post(ts.URL+"/api/v1/tracks/"+created.ContentID+"/unpin", "application/json", nil)
+	if err != nil || unpinResp.StatusCode != http.StatusOK {
+		t.Fatalf("unpin failed: status %d (err: %v)", unpinResp.StatusCode, err)
+	}
+	var unpinResult struct {
+		Pinned bool `json:"pinned"`
+	}
+	_ = json.NewDecoder(unpinResp.Body).Decode(&unpinResult)
+	unpinResp.Body.Close()
+
+	if unpinResult.Pinned {
+		t.Fatal("expected track pinned to be false after unpin")
+	}
+}
+
+func TestManualPeerConnectEndpoint(t *testing.T) {
+	server, _ := createTestAPIServer(t)
+
+	_, privA, _ := crypto.GenerateKeyPair()
+	_, privB, _ := crypto.GenerateKeyPair()
+
+	hostA, _ := p2p.NewHost(p2p.HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privA,
+		DisableRelay: true,
+	})
+	defer hostA.Close()
+
+	hostB, _ := p2p.NewHost(p2p.HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privB,
+		DisableRelay: true,
+	})
+	defer hostB.Close()
+
+	server.SetP2PHost(hostA)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	// Connect using Host B's multiaddress
+	bAddrs := hostB.Addrs()
+	if len(bAddrs) == 0 {
+		t.Fatal("host B has no listen addrs")
+	}
+	bMultiaddr := bAddrs[0].String() + "/p2p/" + hostB.ID().String()
+
+	body, _ := json.Marshal(map[string]string{
+		"addr": bMultiaddr,
+	})
+
+	resp, err := http.Post(ts.URL+"/api/v1/peers/connect", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for manual peer connect, got %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Status string `json:"status"`
+		PeerID string `json:"peer_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "connected" || res.PeerID != hostB.ID().String() {
+		t.Fatalf("unexpected connect result: %+v", res)
+	}
+}
+
 
 

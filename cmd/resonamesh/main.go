@@ -175,6 +175,8 @@ func main() {
 	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
 	apiServer.SetPeerTracker(peerTracker)
 	apiServer.SetSyncer(syncer)
+	apiServer.SetQuotaManager(qm)
+	apiServer.SetP2PHost(p2pHost)
 
 	serverErrors := make(chan error, 1)
 	go func() {
