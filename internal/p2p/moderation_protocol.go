@@ -115,13 +115,7 @@ func (mh *ModerationHandler) handleStream(s network.Stream) {
 		}
 
 		// Persist report into local outbox / store
-		_, _ = mh.engine.SubmitReport(ctx, moderation.CreateReportParams{
-			ContentID:         req.Report.ContentID,
-			PayloadHash:       req.Report.PayloadHash,
-			ReasonCode:        req.Report.ReasonCode,
-			Description:       req.Report.Description,
-			EvidenceReference: req.Report.EvidenceReference,
-		})
+		_ = mh.engine.StoreReceivedReport(ctx, req.Report)
 
 		mh.mu.RLock()
 		modKey := mh.modPrivKey
@@ -308,7 +302,11 @@ func (mh *ModerationHandler) SyncCycle(ctx context.Context) error {
 	if err == nil {
 		for _, r := range reports {
 			if r.Status == "PENDING" {
+				cfg := mh.engine.Config()
 				repEvent := &protocol.ReportEvent{
+					SchemaVersion:     "1.0.0",
+					NetworkID:         cfg.NetworkID,
+					PolicyID:          cfg.PolicyID,
 					ContentID:         r.ContentID,
 					PayloadHash:       r.PayloadHash,
 					ReporterKeyHex:    r.ReporterKey,
