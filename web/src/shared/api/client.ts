@@ -1,0 +1,87 @@
+import type { Track, Manifest, TrackListResponse } from '../../types/track';
+import type { NodeStatus } from '../../types/node';
+
+const API_BASE = '/api/v1';
+
+export const apiClient = {
+  async getTracks(params: {
+    q?: string;
+    limit?: number;
+    offset?: number;
+    pinned?: boolean;
+  } = {}): Promise<TrackListResponse> {
+    const searchParams = new URLSearchParams();
+    if (params.q) searchParams.set('q', params.q);
+    if (params.limit !== undefined) searchParams.set('limit', params.limit.toString());
+    if (params.offset !== undefined) searchParams.set('offset', params.offset.toString());
+    if (params.pinned) searchParams.set('pinned', 'true');
+
+    const res = await fetch(`${API_BASE}/tracks?${searchParams.toString()}`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch tracks: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async getTrack(id: string): Promise<Track> {
+    const res = await fetch(`${API_BASE}/tracks/${id}`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch track: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async getManifest(id: string): Promise<Manifest> {
+    const res = await fetch(`${API_BASE}/tracks/${id}/manifest`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch manifest: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async setPinned(id: string, pinned: boolean): Promise<{ content_id: string; pinned: boolean }> {
+    const res = await fetch(`${API_BASE}/tracks/${id}/pin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinned }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to update pin state: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async deleteTrack(id: string): Promise<{ status: string; content_id: string }> {
+    const res = await fetch(`${API_BASE}/tracks/${id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to delete track: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async importTrack(formData: FormData): Promise<{ manifest: Manifest; track: Track }> {
+    const res = await fetch(`${API_BASE}/tracks/import`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Import failed with status ${res.status}`);
+    }
+    return res.json();
+  },
+
+  async getNodeStatus(): Promise<NodeStatus> {
+    const res = await fetch(`${API_BASE}/node/status`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch node status: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  getStreamUrl(id: string): string {
+    return `${API_BASE}/stream/${id}`;
+  },
+};
