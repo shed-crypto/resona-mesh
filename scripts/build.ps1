@@ -29,6 +29,15 @@ if (-not $SkipFrontend) {
     Write-Host "`n[1/3] Skipping frontend build (reusing web/dist)..." -ForegroundColor Gray
 }
 
+# Ensure Go binary is in PATH
+if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
+    if (Test-Path "C:\Program Files\Go\bin") {
+        $env:PATH += ";C:\Program Files\Go\bin"
+    } elseif (Test-Path "C:\Go\bin") {
+        $env:PATH += ";C:\Go\bin"
+    }
+}
+
 # 2. Automated Testing
 if ($RunTests) {
     Write-Host "`n[2/3] Running Go unit & module test suites..." -ForegroundColor Yellow
@@ -41,8 +50,26 @@ if ($RunAcceptance) {
 }
 
 # 3. Compile Standalone Go Binary
-Write-Host "`n[3/3] Compiling standalone standalone binary (resonamesh.exe)..." -ForegroundColor Yellow
+Write-Host "`n[3/3] Compiling standalone binary (resonamesh.exe)..." -ForegroundColor Yellow
+
+$embeddedSeeds = ""
+if (Test-Path "bootstrap.local.json") {
+    try {
+        $jsonContent = Get-Content "bootstrap.local.json" -Raw | ConvertFrom-Json
+        if ($jsonContent -is [Array]) {
+            $embeddedSeeds = ($jsonContent -join ",")
+            Write-Host "Embedding local bootstrap seeds from bootstrap.local.json ($($jsonContent.Count) endpoints)" -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Host "Warning: Could not parse bootstrap.local.json, skipping embedding." -ForegroundColor Yellow
+    }
+}
+
 $ldflags = "-s -w -X main.AppVersion=0.1.0-alpha -X main.AppName=ResonaMesh"
+if ($embeddedSeeds -ne "") {
+    $ldflags += " -X main.DefaultBootstrapSeeds=$embeddedSeeds"
+}
+
 go build -ldflags $ldflags -o resonamesh.exe ./cmd/resonamesh
 
 if (Test-Path "resonamesh.exe") {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,9 +25,10 @@ import (
 	"resonamesh/pkg/crypto"
 )
 
-const (
-	AppVersion = "0.1.0-alpha"
-	AppName    = "ResonaMesh"
+var (
+	AppVersion            = "0.1.0-alpha"
+	AppName               = "ResonaMesh"
+	DefaultBootstrapSeeds = ""
 )
 
 func main() {
@@ -41,6 +43,15 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if len(cfg.BootstrapSeeds) == 0 && DefaultBootstrapSeeds != "" {
+		for _, s := range strings.Split(DefaultBootstrapSeeds, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				cfg.BootstrapSeeds = append(cfg.BootstrapSeeds, s)
+			}
+		}
 	}
 
 	logLevel := slog.LevelInfo
@@ -178,6 +189,21 @@ func main() {
 		slog.Warn("Failed to start mDNS peer discovery", "error", err)
 	}
 	defer discovery.Close()
+
+	// 8b. Start WAN dynamic bootstrap resolver and periodic reconnect loop
+	if len(cfg.BootstrapSeeds) > 0 {
+		slog.Info("Starting dynamic bootstrap resolver", "seeds_count", len(cfg.BootstrapSeeds))
+		p2p.StartBootstrapLoop(ctx, p2pHost, peerTracker, cfg.BootstrapSeeds, 5*time.Minute, func(peerID peer.ID) {
+			slog.Info("WAN bootstrap peer connected, triggering auto-sync of catalog manifests", "peer_id", peerID.String())
+			syncCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if count, err := syncer.SyncFromPeer(syncCtx, peerID); err != nil {
+				slog.Debug("Auto catalog sync with bootstrap peer finished with notice", "peer_id", peerID.String(), "err", err)
+			} else if count > 0 {
+				slog.Info("Successfully synced manifests from bootstrap peer", "peer_id", peerID.String(), "imported_tracks", count)
+			}
+		})
+	}
 
 	// 9. Wire swarm fetcher into audio streamer
 	fetcher := p2p.NewFetcher(p2pHost, bs, cat)

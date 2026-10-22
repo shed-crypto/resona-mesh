@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -28,6 +29,7 @@ type Config struct {
 	TrustedModeratorPubKey string
 	LogLevel               string
 	NATPortMapEnabled      bool
+	BootstrapSeeds         []string
 }
 
 // DefaultConfig returns safe, preconfigured embedded fallback settings.
@@ -51,12 +53,20 @@ func DefaultConfig() *Config {
 func Load(envPath string, args []string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	// 1. Load from .env file if it exists
+	// 1. Load from local bootstrap configuration file if present
+	if data, err := os.ReadFile("bootstrap.local.json"); err == nil {
+		var fileSeeds []string
+		if err := json.Unmarshal(data, &fileSeeds); err == nil {
+			cfg.BootstrapSeeds = fileSeeds
+		}
+	}
+
+	// 2. Load from .env file if it exists
 	if envPath != "" {
 		_ = loadDotEnv(envPath)
 	}
 
-	// 2. Read from process environment
+	// 3. Read from process environment
 	if val := os.Getenv("RESONAMESH_HTTP_ADDR"); val != "" {
 		cfg.HTTPAddr = val
 	}
@@ -85,8 +95,13 @@ func Load(envPath string, args []string) (*Config, error) {
 	if val := os.Getenv("RESONAMESH_NAT_PORT_MAP"); val != "" {
 		cfg.NATPortMapEnabled = strings.EqualFold(val, "true") || val == "1"
 	}
+	if val := os.Getenv("RESONAMESH_BOOTSTRAP_SEEDS"); val != "" {
+		cfg.BootstrapSeeds = parseSeedsString(val)
+	} else if val := os.Getenv("RESONAMESH_BOOTSTRAP_PEERS"); val != "" {
+		cfg.BootstrapSeeds = parseSeedsString(val)
+	}
 
-	// 3. Override with CLI Flags if provided
+	// 4. Override with CLI Flags if provided
 	if len(args) > 0 {
 		fs := flag.NewFlagSet("resonamesh", flag.ContinueOnError)
 		flagHTTP := fs.String("http", "", "Local HTTP listen address (loopback)")
@@ -95,6 +110,7 @@ func Load(envPath string, args []string) (*Config, error) {
 		flagQuota := fs.Int64("quota", 0, "Storage quota in bytes")
 		flagKeeper := fs.Bool("keeper", false, "Enable automatic background replication")
 		flagNATPortMap := fs.Bool("nat-port-map", cfg.NATPortMapEnabled, "Enable automatic router port mapping via UPnP / NAT-PMP")
+		flagBootstrap := fs.String("bootstrap", "", "Comma-separated bootstrap multiaddrs or HTTP(S) endpoint URLs")
 
 		if err := fs.Parse(args); err != nil {
 			return nil, err
@@ -114,6 +130,9 @@ func Load(envPath string, args []string) (*Config, error) {
 		}
 		if *flagKeeper {
 			cfg.KeeperEnabled = true
+		}
+		if *flagBootstrap != "" {
+			cfg.BootstrapSeeds = parseSeedsString(*flagBootstrap)
 		}
 		fs.Visit(func(f *flag.Flag) {
 			if f.Name == "nat-port-map" {
@@ -179,3 +198,35 @@ func loadDotEnv(filepath string) error {
 	}
 	return scanner.Err()
 }
+
+// parseSeedsString parses a string representing bootstrap seeds, supporting both JSON arrays and comma-separated lists.
+func parseSeedsString(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+		var arr []string
+		if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+			var cleaned []string
+			for _, item := range arr {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					cleaned = append(cleaned, item)
+				}
+			}
+			return cleaned
+		}
+	}
+
+	parts := strings.Split(raw, ",")
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
