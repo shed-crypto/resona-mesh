@@ -263,3 +263,52 @@ func TestImporterQuotaEnforcement(t *testing.T) {
 		t.Fatalf("expected 0 tracks in db after failed import, got: %d", trackCount)
 	}
 }
+
+type mockImporterBlockChecker struct {
+	blocked bool
+	reason  string
+}
+
+func (m *mockImporterBlockChecker) IsBlocked(ctx context.Context, contentID string, payloadHash string) (bool, string, error) {
+	return m.blocked, m.reason, nil
+}
+
+func TestImportBlockedContent(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	db, _ := storage.Open(filepath.Join(tmpDir, "test.db"))
+	defer db.Close()
+	bs, _ := storage.NewBlockStore(tmpDir)
+
+	imp := importer.NewImporter(bs, db)
+	checker := &mockImporterBlockChecker{
+		blocked: true,
+		reason:  "Blocked by copyright claim",
+	}
+	imp.SetBlockChecker(checker)
+
+	_, privKey, _ := crypto.GenerateKeyPair()
+	sampleAudio := make([]byte, 100*1024)
+
+	params := importer.ImportParams{
+		Title:        "Blocked Track",
+		Artist:       "Artist",
+		LicenseCode:  protocol.LicenseCC0,
+		PublisherKey: privKey,
+		AudioData:    bytes.NewReader(sampleAudio),
+	}
+
+	_, err := imp.Import(ctx, params)
+	if err == nil {
+		t.Fatal("expected import to fail due to moderation block, got nil error")
+	}
+
+	// Verify no tracks were saved in DB
+	var count int
+	_ = db.Raw().QueryRowContext(ctx, "SELECT COUNT(*) FROM tracks").Scan(&count)
+	if count != 0 {
+		t.Fatalf("expected 0 tracks saved, got %d", count)
+	}
+}
+

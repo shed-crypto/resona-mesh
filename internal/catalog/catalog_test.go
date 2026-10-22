@@ -326,3 +326,73 @@ func TestCatalogDeleteTrack(t *testing.T) {
 		t.Fatalf("expected deleted track to be purged from FTS5 index, got total=%d", total)
 	}
 }
+
+func TestCatalogModerationFiltering(t *testing.T) {
+	ctx := context.Background()
+	cat, imp, db := setupTestCatalog(t)
+
+	_, privKey, _ := crypto.GenerateKeyPair()
+
+	m, err := imp.Import(ctx, importer.ImportParams{
+		Title:        "Flagged Track",
+		Artist:       "Copyright Infringer",
+		DurationMs:   120000,
+		BitrateKbps:  192,
+		LicenseCode:  protocol.LicenseCC0,
+		PublisherKey: privKey,
+		AudioData:    bytes.NewReader([]byte("sample-data-to-block")),
+	})
+	if err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+
+	// 1. Before blocking: track appears in normal ListTracks
+	tracks, total, err := cat.ListTracks(ctx, catalog.Query{})
+	if err != nil || total != 1 || len(tracks) != 1 {
+		t.Fatalf("expected 1 unblocked track, got total=%d, err=%v", total, err)
+	}
+	if tracks[0].Blocked {
+		t.Fatal("expected track to not be blocked initially")
+	}
+
+	// 2. Mark track as blocked in blocked_content
+	insertBlockSQL := `
+	INSERT INTO blocked_content (
+		content_id, payload_hash, action, decision_event_id, reason_code, reason_text, blocked_at
+	) VALUES (?, ?, 'BLOCK', 'dec-1', 'COPYRIGHT_CLAIM', 'DMCA violation', 1700000000)`
+	_, err = db.Raw().ExecContext(ctx, insertBlockSQL, m.ContentID, "dummy-payload-hash")
+	if err != nil {
+		t.Fatalf("failed to insert block record: %v", err)
+	}
+
+	// 3. Normal ListTracks should now hide the blocked track
+	tracks, total, err = cat.ListTracks(ctx, catalog.Query{})
+	if err != nil || total != 0 || len(tracks) != 0 {
+		t.Fatalf("expected 0 tracks in normal catalog after blocking, got total=%d", total)
+	}
+
+	// 4. ListTracks with IncludeBlocked should return the track with Blocked = true and reason
+	tracks, total, err = cat.ListTracks(ctx, catalog.Query{IncludeBlocked: true})
+	if err != nil || total != 1 || len(tracks) != 1 {
+		t.Fatalf("expected 1 track with IncludeBlocked, got total=%d", total)
+	}
+	if !tracks[0].Blocked || tracks[0].BlockReason != "DMCA violation" {
+		t.Fatalf("expected track blocked=true with reason, got blocked=%v, reason=%s", tracks[0].Blocked, tracks[0].BlockReason)
+	}
+
+	// 5. GetTrack directly retrieves track with Blocked = true
+	track, err := cat.GetTrack(ctx, m.ContentID)
+	if err != nil {
+		t.Fatalf("GetTrack failed: %v", err)
+	}
+	if !track.Blocked || track.BlockReason != "DMCA violation" {
+		t.Fatalf("expected GetTrack to reflect blocked status, got blocked=%v, reason=%s", track.Blocked, track.BlockReason)
+	}
+
+	// 6. RegisterRemoteManifest should reject re-registering blocked content
+	err = cat.RegisterRemoteManifest(ctx, m)
+	if err == nil {
+		t.Fatal("expected RegisterRemoteManifest to fail for blocked track, got nil")
+	}
+}
+

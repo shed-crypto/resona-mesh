@@ -287,3 +287,39 @@ func TestStreamerWithP2PFetcherFallback(t *testing.T) {
 	_ = streamer
 	_ = contentID
 }
+
+type mockBlockChecker struct {
+	blocked bool
+	reason  string
+}
+
+func (m *mockBlockChecker) IsBlocked(ctx context.Context, contentID string, payloadHash string) (bool, string, error) {
+	return m.blocked, m.reason, nil
+}
+
+func TestStreamerBlockedContent(t *testing.T) {
+	streamer, contentID, _ := setupTestAudio(t, 64*1024)
+
+	checker := &mockBlockChecker{
+		blocked: true,
+		reason:  "Infringing copyright claims verified",
+	}
+	streamer.SetBlockChecker(checker)
+
+	req := httptest.NewRequest(http.MethodGet, "/stream", nil)
+	rec := httptest.NewRecorder()
+	streamer.StreamTrack(rec, req, contentID)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for blocked content, got %d", res.StatusCode)
+	}
+
+	body, _ := io.ReadAll(res.Body)
+	if !bytes.Contains(body, []byte("content_blocked")) {
+		t.Fatalf("expected response body to contain 'content_blocked', got %s", string(body))
+	}
+}
+
