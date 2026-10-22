@@ -41,6 +41,12 @@ desktop.ini
 *.key
 data/keys/
 
+# === Environment & Secrets ===
+.env
+.env.local
+.env.*.local
+
+
 # === Test/Experiment data ===
 data/
 experiments/results/
