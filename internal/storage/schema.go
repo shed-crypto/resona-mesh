@@ -87,6 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
 
 CREATE TABLE IF NOT EXISTS decisions (
     event_id TEXT PRIMARY KEY,
+    schema_version TEXT NOT NULL DEFAULT '1.0.0',
+    network_id TEXT NOT NULL DEFAULT 'resonamesh-main',
     policy_id TEXT NOT NULL,
     policy_epoch INTEGER NOT NULL DEFAULT 1,
     content_id TEXT NOT NULL,
