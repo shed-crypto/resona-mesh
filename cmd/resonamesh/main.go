@@ -160,7 +160,18 @@ func main() {
 	fetcher.SetQuotaManager(qm)
 	str.SetFetcher(fetcher)
 
-	// 10. Initialize and launch HTTP REST & streaming server
+	// 10. Initialize Keeper background replication service
+	keeper := p2p.NewKeeper(p2p.KeeperConfig{
+		Enabled:      cfg.KeeperEnabled,
+		Interval:     30 * time.Second,
+		TargetCopies: 2,
+	}, cat, fetcher, str, qm)
+	if err := keeper.Start(ctx); err != nil {
+		slog.Warn("Failed to start keeper service", "error", err)
+	}
+	defer keeper.Stop()
+
+	// 11. Initialize and launch HTTP REST & streaming server
 	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
 	apiServer.SetPeerTracker(peerTracker)
 	apiServer.SetSyncer(syncer)
