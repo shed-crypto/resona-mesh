@@ -22,9 +22,14 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successPeerID, setSuccessPeerID] = useState<string | null>(null);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
+  const [showAllAddrs, setShowAllAddrs] = useState(false);
 
-  const dialableAddrs = (status?.listen_addrs || []).filter(Boolean);
-  const primaryAddr = dialableAddrs.find((a) => !a.includes('/127.0.0.1/') && !a.includes('/169.254.')) || dialableAddrs[0];
+  const rawAddrs = (status?.listen_addrs || []).filter(Boolean);
+  // Filter out dummy APIPA (169.254.x.x) and loopback unless nothing else exists
+  const cleanAddrs = rawAddrs.filter((a) => !a.includes('/169.254.') && !a.includes('/127.0.0.1/'));
+  const dialableAddrs = cleanAddrs.length > 0 ? cleanAddrs : rawAddrs;
+  const primaryAddr = dialableAddrs[0];
+  const secondaryAddrs = dialableAddrs.slice(1);
 
   const handleCopy = (addr: string) => {
     navigator.clipboard.writeText(addr);
@@ -37,6 +42,7 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
     setLoading(false);
     setError(null);
     setSuccessPeerID(null);
+    setShowAllAddrs(false);
   };
 
   const handleClose = () => {
@@ -75,11 +81,11 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title="Connect to Swarm Peer">
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {/* Your Multiaddress Sharing Section */}
         <div
           style={{
-            padding: '14px',
+            padding: '12px 14px',
             backgroundColor: 'rgba(255, 255, 255, 0.03)',
             border: '1px solid var(--border-glass)',
             borderRadius: 'var(--radius-md)',
@@ -88,15 +94,59 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
             gap: '8px',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
-            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Share2 size={14} style={{ color: 'var(--accent-sky)' }} />
-              Ваша адреса для прямого підключення (Share):
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Share2 size={13} style={{ color: 'var(--accent-sky)' }} />
+              Ваша адреса для підключення:
             </span>
-            {primaryAddr && (
+            {secondaryAddrs.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowAllAddrs(!showAllAddrs)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--accent-sky)',
+                  fontSize: '0.72rem',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  padding: 0,
+                }}
+              >
+                {showAllAddrs ? 'Приховати' : `Ще адреси (${secondaryAddrs.length})`}
+              </button>
+            )}
+          </div>
+
+          {primaryAddr ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '8px',
+                padding: '6px 10px',
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid rgba(255, 255, 255, 0.05)',
+              }}
+            >
+              <code
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.72rem',
+                  color: 'var(--accent-sky)',
+                  wordBreak: 'break-all',
+                  userSelect: 'all',
+                  lineHeight: 1.4,
+                }}
+              >
+                {primaryAddr}
+              </code>
               <button
                 type="button"
                 onClick={() => handleCopy(primaryAddr)}
+                title="Копіювати адресу"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -104,23 +154,28 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
                   background: copiedAddr === primaryAddr ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.08)',
                   border: copiedAddr === primaryAddr ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid var(--border-glass)',
                   borderRadius: 'var(--radius-sm)',
-                  padding: '3px 8px',
+                  padding: '4px 8px',
                   color: copiedAddr === primaryAddr ? 'var(--accent-emerald)' : 'var(--text-secondary)',
                   cursor: 'pointer',
-                  fontSize: '0.75rem',
+                  fontSize: '0.72rem',
                   fontWeight: 500,
+                  flexShrink: 0,
                   transition: 'all 0.2s',
                 }}
               >
                 {copiedAddr === primaryAddr ? <Check size={12} /> : <Copy size={12} />}
-                {copiedAddr === primaryAddr ? 'Скопійовано!' : 'Копіювати'}
+                {copiedAddr === primaryAddr ? 'Скопійовано' : 'Копіювати'}
               </button>
-            )}
-          </div>
+            </div>
+          ) : (
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              {status?.peer_id ? `Peer ID: ${status.peer_id}` : 'Адреса вузла визначається...'}
+            </span>
+          )}
 
-          {dialableAddrs.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
-              {dialableAddrs.map((addr) => {
+          {showAllAddrs && secondaryAddrs.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '100px', overflowY: 'auto' }}>
+              {secondaryAddrs.map((addr) => {
                 const isCopied = copiedAddr === addr;
                 return (
                   <div
@@ -130,49 +185,37 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       gap: '8px',
-                      padding: '6px 10px',
-                      backgroundColor: 'var(--bg-card)',
+                      padding: '4px 8px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.3)',
                       borderRadius: 'var(--radius-sm)',
-                      border: '1px solid rgba(255, 255, 255, 0.05)',
+                      fontSize: '0.7rem',
                     }}
                   >
-                    <code
-                      style={{
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: '0.73rem',
-                        color: 'var(--text-secondary)',
-                        wordBreak: 'break-all',
-                        userSelect: 'all',
-                      }}
-                    >
+                    <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', wordBreak: 'break-all' }}>
                       {addr}
                     </code>
                     <button
                       type="button"
                       onClick={() => handleCopy(addr)}
-                      title="Копіювати цю адресу"
                       style={{
                         background: 'none',
                         border: 'none',
-                        padding: '4px',
                         cursor: 'pointer',
                         color: isCopied ? 'var(--accent-emerald)' : 'var(--text-muted)',
                         flexShrink: 0,
+                        padding: '2px',
                       }}
                     >
-                      {isCopied ? <Check size={14} /> : <Copy size={14} />}
+                      {isCopied ? <Check size={12} /> : <Copy size={12} />}
                     </button>
                   </div>
                 );
               })}
             </div>
-          ) : (
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              {status?.peer_id ? `Peer ID: ${status.peer_id}` : 'Адреса вузла визначається...'}
-            </span>
           )}
-          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-            Надішліть цю адресу іншому користувачу, щоб він вставив її нижче для прямого з'єднання.
+
+          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+            Надішліть цю адресу іншому користувачу для прямого з'єднання через LAN або WAN.
           </span>
         </div>
         {error && (

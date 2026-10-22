@@ -513,7 +513,27 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	pubKeyHex := crypto.PublicKeyToHex(pubKey)
 
 	connectedPeers := 0
-	if s.peerTracker != nil {
+	directPeers := 0
+	relayConnected := false
+	if s.p2pHost != nil {
+		activePeers := s.p2pHost.ConnectedPeers()
+		connectedPeers = len(activePeers)
+		for _, pID := range activePeers {
+			isWS := false
+			for _, conn := range s.p2pHost.Raw().Network().ConnsToPeer(pID) {
+				mStr := conn.RemoteMultiaddr().String()
+				if strings.Contains(mStr, "/ws") || strings.Contains(mStr, "/wss") {
+					isWS = true
+					break
+				}
+			}
+			if isWS {
+				relayConnected = true
+			} else {
+				directPeers++
+			}
+		}
+	} else if s.peerTracker != nil {
 		for _, p := range s.peerTracker.Peers() {
 			if p.Connected {
 				connectedPeers++
@@ -538,6 +558,9 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		"storage_used_bytes":  storedBytes,
 		"total_tracks":        totalTracks,
 		"connected_peers":     connectedPeers,
+		"direct_peers":        directPeers,
+		"relay_connected":     relayConnected,
+		"bootstrap_seeds":     s.cfg.BootstrapSeeds,
 		"uptime_seconds":      int64(time.Since(s.startTime).Seconds()),
 		"peer_id":             p2pPeerID,
 		"listen_addrs":        listenAddrs,
@@ -872,7 +895,9 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
 	}
 
 	connectedPeers := 0
-	if s.peerTracker != nil {
+	if s.p2pHost != nil {
+		connectedPeers = len(s.p2pHost.ConnectedPeers())
+	} else if s.peerTracker != nil {
 		for _, p := range s.peerTracker.Peers() {
 			if p.Connected {
 				connectedPeers++

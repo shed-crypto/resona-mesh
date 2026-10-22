@@ -144,3 +144,4 @@ func TestBootstrapSwarmConnection(t *testing.T) {
 		t.Errorf("expected callback with host B peer ID, got %s", connectedPeer)
 	}
 }
+

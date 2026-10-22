@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { HardDrive, Key, Activity, Clock, Radio, Settings, UserPlus, Share2, Check } from 'lucide-react';
+import { HardDrive, Key, Activity, Clock, Radio, Settings, UserPlus, Share2, Check, Globe } from 'lucide-react';
 import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
 import { Badge } from '../../shared/components/Badge';
 import { ConnectPeerModal } from './ConnectPeerModal';
@@ -102,11 +102,11 @@ export const NodeStatusPanel: React.FC = () => {
           <Badge variant="neutral">v{status.version}</Badge>
         </div>
 
-        {/* P2P Swarm Peers Button */}
+        {/* Direct Swarm Peers (Seeds & Clients) */}
         <button
           type="button"
           onClick={() => setIsConnectOpen(true)}
-          title="Click to manually dial/connect a swarm peer"
+          title="Swarm Peers (Direct Audio Streamers & Seeds). Click to dial/connect manually."
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -125,14 +125,40 @@ export const NodeStatusPanel: React.FC = () => {
           <Radio
             size={14}
             style={{
-              color: (status.connected_peers ?? 0) > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              color: (status.direct_peers ?? status.connected_peers ?? 0) > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
             }}
           />
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
-            {status.connected_peers ?? 0} {(status.connected_peers ?? 0) === 1 ? 'peer' : 'peers'}
+            {status.direct_peers ?? status.connected_peers ?? 0} {(status.direct_peers ?? status.connected_peers ?? 0) === 1 ? 'peer' : 'peers'}
           </span>
           <UserPlus size={12} style={{ color: 'var(--text-muted)', marginLeft: '2px' }} />
         </button>
+
+        {/* Cloud Relay / Directing Server Status Badge */}
+        <div
+          title={status.relay_connected ? 'Cloud Swarm Relay: Connected & Routing' : 'Cloud Swarm Relay: Searching for beacon...'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            padding: '2px 7px',
+            borderRadius: 'var(--radius-sm)',
+            backgroundColor: status.relay_connected ? 'rgba(0, 255, 204, 0.08)' : 'rgba(255, 255, 255, 0.03)',
+            border: status.relay_connected ? '1px solid rgba(0, 255, 204, 0.25)' : '1px solid var(--border-glass)',
+            fontSize: '0.72rem',
+            color: status.relay_connected ? 'var(--accent-sky)' : 'var(--text-muted)',
+          }}
+        >
+          <Globe
+            size={13}
+            style={{
+              color: status.relay_connected ? 'var(--accent-emerald)' : 'var(--text-muted)',
+            }}
+          />
+          <span style={{ fontWeight: 500 }}>
+            {status.relay_connected ? 'Relay Online' : 'Relay Standby'}
+          </span>
+        </div>
 
         {/* Quick Multiaddress Copy Button */}
         {primaryAddr && (

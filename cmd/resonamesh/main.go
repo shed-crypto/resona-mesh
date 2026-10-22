@@ -13,7 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 
 	"resonamesh/internal/api"
 	"resonamesh/internal/catalog"
@@ -149,9 +151,10 @@ func main() {
 
 	// 6. Initialize P2P Host and Swarm engine
 	hostConfig := p2p.HostConfig{
-		PrivateKey:       privKey,
-		DisableRelay:     true,
-		EnableNATPortMap: cfg.NATPortMapEnabled,
+		PrivateKey:         privKey,
+		DisableRelay:       false,
+		EnableRelayService: cfg.Headless,
+		EnableNATPortMap:   cfg.NATPortMapEnabled,
 	}
 
 	if cfg.Headless {
@@ -179,6 +182,8 @@ func main() {
 	}
 	defer p2pHost.Close()
 
+	peerTracker := p2p.NewPeerTracker()
+
 	// 7. Register P2P block exchange wire protocol
 	blockHandler := p2p.NewProtocolHandler(p2pHost, &catalogBlockProvider{bs: bs})
 	blockHandler.SetBlockChecker(modEngine)
@@ -190,16 +195,55 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Register P2P Peer Exchange (PEX) wire protocol for swarm relay discovery
+	pexHandler := p2p.NewPeerExchange(p2pHost, peerTracker)
+
+	// Register universal swarm network connection listener
+	p2pHost.Network().Notify(&network.NotifyBundle{
+		ConnectedF: func(n network.Network, c network.Conn) {
+			remotePeer := c.RemotePeer()
+			remoteAddr := c.RemoteMultiaddr()
+			slog.Info("Swarm peer connection established", "peer_id", remotePeer.String(), "addr", remoteAddr.String())
+			peerTracker.RecordPeer(peer.AddrInfo{ID: remotePeer, Addrs: []multiaddr.Multiaddr{remoteAddr}}, true)
+
+			// Automatically sync catalog manifests with newly connected peer
+			go func() {
+				syncCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				if count, err := syncer.SyncFromPeer(syncCtx, remotePeer); err != nil {
+					slog.Debug("Catalog sync finished with notice", "peer_id", remotePeer.String(), "err", err)
+				} else if count > 0 {
+					slog.Info("Successfully synced manifests from connected peer", "peer_id", remotePeer.String(), "imported_tracks", count)
+				}
+			}()
+
+			// Automatically query PEX to discover other swarm members (e.g. routed through relay)
+			go func() {
+				pexCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if discovered, err := pexHandler.QueryPeers(pexCtx, remotePeer); err == nil && len(discovered) > 0 {
+					slog.Info("Discovered and connected to new peers via PEX", "count", len(discovered))
+				}
+			}()
+		},
+		DisconnectedF: func(n network.Network, c network.Conn) {
+			remotePeer := c.RemotePeer()
+			if len(n.ConnsToPeer(remotePeer)) == 0 {
+				peerTracker.SetConnected(remotePeer, false)
+				slog.Info("Swarm peer disconnected", "peer_id", remotePeer.String())
+			}
+		},
+	})
+
 	// Register P2P moderation wire protocol
 	modHandler := p2p.NewModerationHandler(p2pHost, modEngine, nil)
 	modHandler.Start(ctx)
 	defer modHandler.Stop()
 
 	// 9. Start mDNS peer discovery and tracker
-	peerTracker := p2p.NewPeerTracker()
 	discovery := p2p.NewDiscoveryService(p2pHost, peerTracker, p2p.DefaultMDNSServiceTag)
 	discovery.SetOnPeerConnected(func(peerID peer.ID) {
-		slog.Info("Peer connected, triggering auto-sync of catalog manifests", "peer_id", peerID.String())
+		slog.Info("mDNS peer connected, triggering auto-sync of catalog manifests", "peer_id", peerID.String())
 		syncCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if count, err := syncer.SyncFromPeer(syncCtx, peerID); err != nil {
@@ -216,14 +260,21 @@ func main() {
 	// 9b. Start WAN dynamic bootstrap resolver and periodic reconnect loop
 	if len(cfg.BootstrapSeeds) > 0 {
 		slog.Info("Starting dynamic bootstrap resolver", "seeds_count", len(cfg.BootstrapSeeds))
-		p2p.StartBootstrapLoop(ctx, p2pHost, peerTracker, cfg.BootstrapSeeds, 5*time.Minute, func(peerID peer.ID) {
+		p2p.StartBootstrapLoop(ctx, p2pHost, peerTracker, cfg.BootstrapSeeds, 2*time.Minute, func(peerID peer.ID) {
 			slog.Info("WAN bootstrap peer connected, triggering auto-sync of catalog manifests", "peer_id", peerID.String())
-			syncCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			syncCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			if count, err := syncer.SyncFromPeer(syncCtx, peerID); err != nil {
 				slog.Debug("Auto catalog sync with bootstrap peer finished with notice", "peer_id", peerID.String(), "err", err)
 			} else if count > 0 {
 				slog.Info("Successfully synced manifests from bootstrap peer", "peer_id", peerID.String(), "imported_tracks", count)
+			}
+
+			// Query bootstrap peer for other swarm peers via PEX
+			pexCtx, cancelPex := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancelPex()
+			if discovered, err := pexHandler.QueryPeers(pexCtx, peerID); err == nil && len(discovered) > 0 {
+				slog.Info("Discovered additional peers from bootstrap relay via PEX", "count", len(discovered))
 			}
 		})
 	}
