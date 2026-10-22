@@ -35,6 +35,12 @@ type Config struct {
 	DisableRelay           bool
 }
 
+// DefaultBootstrapSeeds defines canonical WAN bootstrap seed endpoints.
+var DefaultBootstrapSeeds = []string{
+	"https://resona-mesh.onrender.com/api/v1/seeds",
+	"https://gist.githubusercontent.com/shed-crypto/8d20d793034bbd91acef77bea67ce353/raw",
+}
+
 // DefaultConfig returns safe, preconfigured embedded fallback settings.
 func DefaultConfig() *Config {
 	return &Config{
@@ -46,6 +52,7 @@ func DefaultConfig() *Config {
 		TrustedModeratorPubKey: "",
 		LogLevel:               "INFO",
 		NATPortMapEnabled:      true,
+		BootstrapSeeds:         append([]string(nil), DefaultBootstrapSeeds...),
 		AllowInsecureHTTP:      false,
 		Headless:               false,
 		DisableRelay:           false,
