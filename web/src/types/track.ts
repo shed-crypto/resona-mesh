@@ -17,6 +17,7 @@ export interface Track {
   availability_pct: number;
   blocked?: boolean;
   block_reason?: string;
+  has_cover?: boolean;
 }
 
 export interface Manifest {

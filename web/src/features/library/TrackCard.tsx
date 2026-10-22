@@ -3,6 +3,7 @@ import { Play, Pause, Pin, Trash2, ShieldCheck, Flag, Ban, ListPlus } from 'luci
 import type { Track } from '../../types/track';
 import { Badge } from '../../shared/components/Badge';
 import { generateCoverDataUri } from '../../shared/utils/artwork';
+import { apiClient } from '../../shared/api/client';
 
 interface TrackCardProps {
   track: Track;
@@ -41,7 +42,8 @@ export const TrackCard: React.FC<TrackCardProps> = ({
   };
 
   const isFullAvailable = track.availability_pct >= 99.9;
-  const coverArtUri = generateCoverDataUri(track.content_id, track.title);
+  const fallbackCoverUri = generateCoverDataUri(track.content_id, track.title);
+  const coverArtUri = track.has_cover ? apiClient.getCoverUrl(track.content_id) : fallbackCoverUri;
 
   return (
     <div
@@ -110,7 +112,14 @@ export const TrackCard: React.FC<TrackCardProps> = ({
             flexShrink: 0,
           }}
         >
-          <img src={coverArtUri} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          <img
+            src={coverArtUri}
+            alt=""
+            onError={(e) => {
+              e.currentTarget.src = fallbackCoverUri;
+            }}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
         </div>
 
         <div style={{ minWidth: 0, flex: 1 }}>
