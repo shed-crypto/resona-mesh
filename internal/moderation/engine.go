@@ -76,6 +76,8 @@ type ReportRecord struct {
 
 type DecisionRecord struct {
 	EventID         string `json:"event_id"`
+	SchemaVersion   string `json:"schema_version"`
+	NetworkID       string `json:"network_id"`
 	PolicyID        string `json:"policy_id"`
 	PolicyEpoch     uint64 `json:"policy_epoch"`
 	ContentID       string `json:"content_id"`
@@ -341,15 +343,26 @@ func (e *Engine) ApplyDecision(ctx context.Context, d *protocol.DecisionEvent) e
 	}
 
 	// 4. Record decision
+	schemaVer := d.SchemaVersion
+	if schemaVer == "" {
+		schemaVer = "1.0.0"
+	}
+	netID := d.NetworkID
+	if netID == "" {
+		netID = e.cfg.NetworkID
+	}
+
 	insertDecisionSQL := `
 	INSERT INTO decisions (
-		event_id, policy_id, policy_epoch, content_id, payload_hash,
+		event_id, schema_version, network_id, policy_id, policy_epoch, content_id, payload_hash,
 		sequence, previous_event_id, action, reason_code, reason_text,
 		moderator_key, issued_at, signature
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = tx.ExecContext(ctx, insertDecisionSQL,
 		eventID,
+		schemaVer,
+		netID,
 		d.PolicyID,
 		d.PolicyEpoch,
 		d.ContentID,
@@ -558,7 +571,7 @@ func (e *Engine) ListReports(ctx context.Context) ([]ReportRecord, error) {
 func (e *Engine) ListDecisions(ctx context.Context) ([]DecisionRecord, error) {
 	query := `
 	SELECT 
-		event_id, policy_id, policy_epoch, content_id, payload_hash,
+		event_id, schema_version, network_id, policy_id, policy_epoch, content_id, payload_hash,
 		sequence, previous_event_id, action, reason_code, reason_text,
 		moderator_key, issued_at, signature
 	FROM decisions
@@ -574,7 +587,7 @@ func (e *Engine) ListDecisions(ctx context.Context) ([]DecisionRecord, error) {
 	for rows.Next() {
 		var d DecisionRecord
 		if err := rows.Scan(
-			&d.EventID, &d.PolicyID, &d.PolicyEpoch, &d.ContentID, &d.PayloadHash,
+			&d.EventID, &d.SchemaVersion, &d.NetworkID, &d.PolicyID, &d.PolicyEpoch, &d.ContentID, &d.PayloadHash,
 			&d.Sequence, &d.PreviousEventID, &d.Action, &d.ReasonCode, &d.ReasonText,
 			&d.ModeratorKey, &d.IssuedAt, &d.Signature,
 		); err != nil {
