@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -143,25 +144,46 @@ func main() {
 	str.SetQuotaManager(qm)
 	str.SetBlockChecker(modEngine)
 
-	// 5. Initialize P2P Host and Swarm engine
-	p2pListenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
-	p2pHost, err := p2p.NewHost(p2p.HostConfig{
-		ListenAddr:       p2pListenAddr,
+	// 5. Initialize HTTP REST & streaming server
+	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
+
+	// 6. Initialize P2P Host and Swarm engine
+	hostConfig := p2p.HostConfig{
 		PrivateKey:       privKey,
 		DisableRelay:     true,
 		EnableNATPortMap: cfg.NATPortMapEnabled,
-	})
+	}
+
+	if cfg.Headless {
+		// In headless container/cloud relay mode (e.g. Render), single-port co-hosting is enabled:
+		// Libp2p WebSocket transport binds to the HTTP port and upgrades P2P streams, while routing
+		// HTTP browser requests (Status Dashboard) to the apiServer HTTP handler.
+		h, portStr, err := net.SplitHostPort(cfg.HTTPAddr)
+		if err == nil {
+			hostConfig.ListenAddrs = []string{
+				fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
+				fmt.Sprintf("/ip4/%s/tcp/%s/ws", h, portStr),
+			}
+			hostConfig.HTTPHandler = apiServer.Handler()
+		} else {
+			hostConfig.ListenAddr = fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
+		}
+	} else {
+		hostConfig.ListenAddr = fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
+	}
+
+	p2pHost, err := p2p.NewHost(hostConfig)
 	if err != nil {
 		slog.Error("Failed to initialize libp2p host", "error", err)
 		os.Exit(1)
 	}
 	defer p2pHost.Close()
 
-	// 6. Register P2P block exchange wire protocol
+	// 7. Register P2P block exchange wire protocol
 	blockHandler := p2p.NewProtocolHandler(p2pHost, &catalogBlockProvider{bs: bs})
 	blockHandler.SetBlockChecker(modEngine)
 
-	// 7. Register P2P manifest synchronization protocol
+	// 8. Register P2P manifest synchronization protocol
 	syncer, err := p2p.NewCatalogSyncer(p2pHost, cat)
 	if err != nil {
 		slog.Error("Failed to initialize catalog syncer", "error", err)
@@ -173,7 +195,7 @@ func main() {
 	modHandler.Start(ctx)
 	defer modHandler.Stop()
 
-	// 8. Start mDNS peer discovery and tracker
+	// 9. Start mDNS peer discovery and tracker
 	peerTracker := p2p.NewPeerTracker()
 	discovery := p2p.NewDiscoveryService(p2pHost, peerTracker, p2p.DefaultMDNSServiceTag)
 	discovery.SetOnPeerConnected(func(peerID peer.ID) {
@@ -191,7 +213,7 @@ func main() {
 	}
 	defer discovery.Close()
 
-	// 8b. Start WAN dynamic bootstrap resolver and periodic reconnect loop
+	// 9b. Start WAN dynamic bootstrap resolver and periodic reconnect loop
 	if len(cfg.BootstrapSeeds) > 0 {
 		slog.Info("Starting dynamic bootstrap resolver", "seeds_count", len(cfg.BootstrapSeeds))
 		p2p.StartBootstrapLoop(ctx, p2pHost, peerTracker, cfg.BootstrapSeeds, 5*time.Minute, func(peerID peer.ID) {
@@ -206,13 +228,13 @@ func main() {
 		})
 	}
 
-	// 9. Wire swarm fetcher into audio streamer
+	// 10. Wire swarm fetcher into audio streamer
 	fetcher := p2p.NewFetcher(p2pHost, bs, cat)
 	fetcher.SetQuotaManager(qm)
 	fetcher.SetBlockChecker(modEngine)
 	str.SetFetcher(fetcher)
 
-	// 10. Initialize Keeper background replication service
+	// 11. Initialize Keeper background replication service
 	keeper := p2p.NewKeeper(p2p.KeeperConfig{
 		Enabled:      cfg.KeeperEnabled,
 		Interval:     30 * time.Second,
@@ -223,8 +245,7 @@ func main() {
 	}
 	defer keeper.Stop()
 
-	// 11. Initialize and launch HTTP REST & streaming server
-	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
+	// 12. Wire P2P dependencies and launch HTTP server if not co-hosted
 	apiServer.SetPeerTracker(peerTracker)
 	apiServer.SetSyncer(syncer)
 	apiServer.SetQuotaManager(qm)
@@ -232,11 +253,15 @@ func main() {
 	apiServer.SetModerationEngine(modEngine, nil)
 
 	serverErrors := make(chan error, 1)
-	go func() {
-		if err := apiServer.Start(); err != nil {
-			serverErrors <- err
-		}
-	}()
+	if !cfg.Headless || hostConfig.HTTPHandler == nil {
+		go func() {
+			if err := apiServer.Start(); err != nil {
+				serverErrors <- err
+			}
+		}()
+	} else {
+		slog.Info("Headless relay co-hosting HTTP and WebSocket on unified port", "http_addr", cfg.HTTPAddr)
+	}
 
 	slog.Info("ResonaMesh node running. Awaiting shutdown signal...",
 		"http", cfg.HTTPAddr,

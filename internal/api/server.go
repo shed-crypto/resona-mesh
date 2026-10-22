@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -881,6 +882,29 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
 
 	totalTracks, _, _ := s.catalog.Stats(r.Context())
 
+	// Dynamically resolve public WAN multiaddress for WAN peers
+	hostHeader := r.Host
+	hostname, _, err := net.SplitHostPort(hostHeader)
+	if err != nil {
+		hostname = hostHeader
+	}
+	if hostname == "" {
+		hostname = "127.0.0.1"
+	}
+
+	var wanMultiaddr string
+	if ip := net.ParseIP(hostname); ip != nil {
+		if ip.To4() != nil {
+			wanMultiaddr = fmt.Sprintf("/ip4/%s/tcp/443/wss/p2p/%s", hostname, peerID)
+		} else {
+			wanMultiaddr = fmt.Sprintf("/ip6/%s/tcp/443/wss/p2p/%s", hostname, peerID)
+		}
+	} else {
+		wanMultiaddr = fmt.Sprintf("/dns4/%s/tcp/443/wss/p2p/%s", hostname, peerID)
+	}
+
+	gistJSON := fmt.Sprintf("[\n  \"%s\"\n]", wanMultiaddr)
+
 	html := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1008,15 +1032,39 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
             border: 1px solid var(--border);
             border-radius: 10px;
             padding: 16px;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
+        }
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
         }
         .label {
             font-size: 11px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             color: var(--text-muted);
-            margin-bottom: 8px;
             font-weight: 600;
+        }
+        .copy-btn {
+            background: #1a2230;
+            border: 1px solid #2d3748;
+            color: var(--accent);
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .copy-btn:hover {
+            background: #232d40;
+            border-color: var(--accent);
+            box-shadow: 0 0 8px rgba(0, 255, 204, 0.3);
+        }
+        .copy-btn:active {
+            transform: scale(0.97);
         }
         .code-box {
             background: #050608;
@@ -1091,7 +1139,23 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
         </div>
 
         <div class="card">
-            <div class="label">Swarm Peer Identity (LibP2P)</div>
+            <div class="card-header">
+                <div class="label">Public Swarm Multiaddress (WebSocket Secure)</div>
+                <button class="copy-btn" id="btn-copy-addr" onclick="copyText('wan-addr', 'btn-copy-addr', 'Copied Address!')">Copy Multiaddr</button>
+            </div>
+            <div class="code-box" id="wan-addr">%s</div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="label">Bootstrap Seeds JSON (Ready for GitHub Gist)</div>
+                <button class="copy-btn" id="btn-copy-json" onclick="copyText('gist-json', 'btn-copy-json', 'Copied JSON!')">Copy for Gist</button>
+            </div>
+            <pre class="code-box" id="gist-json" style="white-space: pre;">%s</pre>
+        </div>
+
+        <div class="card">
+            <div class="label" style="margin-bottom: 8px;">Swarm Peer Identity (LibP2P)</div>
             <div class="code-box">%s</div>
         </div>
 
@@ -1105,8 +1169,27 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
             <a href="/api/v1/node/status" target="_blank">View JSON Metrics &rarr;</a>
         </div>
     </div>
+
+    <script>
+        function copyText(elemId, btnId, feedbackText) {
+            var el = document.getElementById(elemId);
+            if (!el) return;
+            var text = el.innerText;
+            navigator.clipboard.writeText(text).then(function() {
+                var btn = document.getElementById(btnId);
+                if (!btn) return;
+                var orig = btn.innerText;
+                btn.innerText = feedbackText;
+                btn.style.borderColor = '#00ffcc';
+                setTimeout(function() {
+                    btn.innerText = orig;
+                    btn.style.borderColor = '';
+                }, 2000);
+            });
+        }
+    </script>
 </body>
-</html>`, connectedPeers, totalTracks, AppVersion, peerID)
+</html>`, connectedPeers, totalTracks, AppVersion, wanMultiaddr, gistJSON, peerID)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
