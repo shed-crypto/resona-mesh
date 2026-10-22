@@ -133,7 +133,7 @@ func TestCatalogFTS5UkrainianSearch(t *testing.T) {
 		t.Fatalf("failed to import track B: %v", err)
 	}
 
-	// 1. Search by title prefix: "сопілк*"
+	// 1. Search by title prefix
 	results, total, err := cat.ListTracks(ctx, catalog.Query{Search: "сопілк"})
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
@@ -145,7 +145,7 @@ func TestCatalogFTS5UkrainianSearch(t *testing.T) {
 		t.Fatalf("unexpected search result: %s", results[0].Title)
 	}
 
-	// 2. Search by artist: "Шевченко"
+	// 2. Search by artist
 	results, total, err = cat.ListTracks(ctx, catalog.Query{Search: "Шевченко"})
 	if err != nil {
 		t.Fatalf("search for artist failed: %v", err)
@@ -154,7 +154,7 @@ func TestCatalogFTS5UkrainianSearch(t *testing.T) {
 		t.Fatalf("expected artist match for Шевченко, got: %v", results)
 	}
 
-	// 3. Search by description keyword: "контрабас"
+	// 3. Search by description keyword
 	results, total, err = cat.ListTracks(ctx, catalog.Query{Search: "контрабас"})
 	if err != nil {
 		t.Fatalf("search for description failed: %v", err)
