@@ -80,12 +80,21 @@ func (r *SeedResolver) ResolveSeeds(ctx context.Context, seeds []string) ([]peer
 
 // fetchFromURL retrieves and decodes a JSON list of multiaddress strings from a remote endpoint.
 func (r *SeedResolver) fetchFromURL(ctx context.Context, endpoint string) ([]peer.AddrInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	fetchURL := endpoint
+	sep := "?"
+	if strings.Contains(fetchURL, "?") {
+		sep = "&"
+	}
+	fetchURL = fmt.Sprintf("%s%s_t=%d", fetchURL, sep, time.Now().UnixNano())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: failed to construct request for %s: %w", endpoint, err)
 	}
 	req.Header.Set("User-Agent", "ResonaMesh-Bootstrap/0.1.0")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	req.Header.Set("Pragma", "no-cache")
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
@@ -248,14 +257,17 @@ func StartBootstrapLoop(ctx context.Context, h *Host, tracker *PeerTracker, seed
 			slog.Info("Initial bootstrap pass connected peers", "count", count)
 		}
 
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
 		for {
+			nextInterval := interval
+			if len(h.ConnectedPeers()) == 0 {
+				nextInterval = 10 * time.Second
+			}
+			timer := time.NewTimer(nextInterval)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
+			case <-timer.C:
 				if count, err := BootstrapSwarm(ctx, h, tracker, seeds, onConnected); err != nil {
 					slog.Debug("Periodic bootstrap refresh encountered an issue", "error", err)
 				} else if count > 0 {

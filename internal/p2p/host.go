@@ -17,7 +17,10 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	libp2pws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
+	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
+	circuitclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	circuitrelay "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -66,6 +69,7 @@ func NewHost(cfg HostConfig) (*Host, error) {
 		libp2p.Identity(p2pPrivKey),
 		libp2p.ListenAddrStrings(listenAddrs...),
 		libp2p.Transport(libp2ptcp.NewTCPTransport),
+		libp2p.Transport(libp2pquic.NewTransport),
 		libp2p.Security(noise.ID, noise.New),
 	}
 
@@ -79,9 +83,16 @@ func NewHost(cfg HostConfig) (*Host, error) {
 
 	if cfg.DisableRelay {
 		opts = append(opts, libp2p.DisableRelay())
+	} else {
+		opts = append(opts, libp2p.EnableHolePunching(
+			holepunch.WithTracer(&holePunchLogger{}),
+		))
 	}
 	if cfg.EnableNATPortMap {
 		opts = append(opts, libp2p.NATPortMap())
+	}
+	if cfg.EnableRelayService {
+		opts = append(opts, libp2p.EnableNATService(), libp2p.ForceReachabilityPublic())
 	}
 
 	rawHost, err := libp2p.New(opts...)
@@ -90,10 +101,10 @@ func NewHost(cfg HostConfig) (*Host, error) {
 	}
 
 	if cfg.EnableRelayService {
-		if _, err := circuitrelay.New(rawHost); err != nil {
+		if _, err := circuitrelay.New(rawHost, circuitrelay.WithInfiniteLimits()); err != nil {
 			slog.Warn("Failed to initialize circuit relay v2 service", "error", err)
 		} else {
-			slog.Info("Circuit relay v2 service active on host")
+			slog.Info("Circuit relay v2 service active on host with infinite limits")
 		}
 	}
 
@@ -146,7 +157,57 @@ func (h *Host) ConnectedPeers() []peer.ID {
 	return h.raw.Network().Peers()
 }
 
+// ReserveRelay attempts to reserve a circuit relay v2 slot on the specified relay peer.
+func (h *Host) ReserveRelay(ctx context.Context, relayID peer.ID) (*circuitclient.Reservation, error) {
+	return circuitclient.Reserve(ctx, h.raw, peer.AddrInfo{ID: relayID})
+}
+
 // Close gracefully closes the host, terminating active connections and streams.
 func (h *Host) Close() error {
 	return h.raw.Close()
 }
+
+type holePunchLogger struct{}
+
+func (l *holePunchLogger) Trace(e *holepunch.Event) {
+	switch v := e.Evt.(type) {
+	case *holepunch.StartHolePunchEvt:
+		slog.Info("NAT DCUtR hole punching initiated",
+			"remote_peer", e.Remote.String(),
+			"remote_addrs", v.RemoteAddrs,
+			"rtt_ms", v.RTT.Milliseconds(),
+		)
+	case *holepunch.DirectDialEvt:
+		if v.Success {
+			slog.Info("NAT DCUtR direct dial succeeded",
+				"remote_peer", e.Remote.String(),
+				"elapsed_ms", v.EllapsedTime.Milliseconds(),
+			)
+		} else {
+			slog.Debug("NAT DCUtR direct dial attempt failed",
+				"remote_peer", e.Remote.String(),
+				"elapsed_ms", v.EllapsedTime.Milliseconds(),
+				"error", v.Error,
+			)
+		}
+	case *holepunch.EndHolePunchEvt:
+		if v.Success {
+			slog.Info("NAT DCUtR hole punching successfully upgraded connection to DIRECT P2P",
+				"remote_peer", e.Remote.String(),
+				"elapsed_ms", v.EllapsedTime.Milliseconds(),
+			)
+		} else {
+			slog.Warn("NAT DCUtR hole punching failed, remaining on circuit relay fallback",
+				"remote_peer", e.Remote.String(),
+				"elapsed_ms", v.EllapsedTime.Milliseconds(),
+				"error", v.Error,
+			)
+		}
+	case *holepunch.ProtocolErrorEvt:
+		slog.Debug("NAT DCUtR protocol error",
+			"remote_peer", e.Remote.String(),
+			"type", e.Type,
+		)
+	}
+}
+

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -142,6 +143,70 @@ func TestBootstrapSwarmConnection(t *testing.T) {
 	}
 	if connectedPeer != hostB.ID().String() {
 		t.Errorf("expected callback with host B peer ID, got %s", connectedPeer)
+	}
+}
+
+func TestLiveGistAndRenderWSConnection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping live network test in short mode")
+	}
+
+	liveURL := os.Getenv("RESONAMESH_TEST_LIVE_SEED_URL")
+	if liveURL == "" {
+		if data, err := os.ReadFile("../../bootstrap.local.json"); err == nil {
+			var seeds []string
+			if err := json.Unmarshal(data, &seeds); err == nil && len(seeds) > 0 {
+				liveURL = seeds[0]
+			}
+		}
+	}
+	if liveURL == "" {
+		t.Skip("skipping live network test: no live seed configured (set RESONAMESH_TEST_LIVE_SEED_URL or create bootstrap.local.json)")
+	}
+
+	resolver := NewSeedResolver(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	infos, err := resolver.ResolveSeeds(ctx, []string{liveURL})
+	if err != nil {
+		t.Fatalf("failed to resolve seeds from gist: %v", err)
+	}
+	if len(infos) == 0 {
+		t.Fatalf("endpoint returned 0 seed peers")
+	}
+
+	t.Logf("Resolved %d peer(s) from endpoint: ID=%s Addrs=%v", len(infos), infos[0].ID, infos[0].Addrs)
+
+	_, priv, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	host, err := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   priv,
+		DisableRelay: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create host: %v", err)
+	}
+	defer host.Close()
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer dialCancel()
+
+	start := time.Now()
+	if err := host.Connect(dialCtx, infos[0]); err != nil {
+		t.Fatalf("failed to connect to Render relay peer via Gist multiaddr: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	peers := host.ConnectedPeers()
+	t.Logf("Successfully connected to Render relay [%s] in %v! Connected peers: %v", infos[0].ID, elapsed, peers)
+	if len(peers) != 1 || peers[0] != infos[0].ID {
+		t.Fatalf("expected host to be connected to %s, got %v", infos[0].ID, peers)
 	}
 }
 
