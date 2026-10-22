@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Pause, Pin, Trash2, ShieldCheck } from 'lucide-react';
+import { Play, Pause, Pin, Trash2, ShieldCheck, Flag, Ban } from 'lucide-react';
 import type { Track } from '../../types/track';
 import { Badge } from '../../shared/components/Badge';
 
@@ -10,6 +10,7 @@ interface TrackCardProps {
   onPlay: () => void;
   onTogglePin: () => void;
   onDelete: () => void;
+  onReport?: () => void;
 }
 
 export const TrackCard: React.FC<TrackCardProps> = ({
@@ -19,6 +20,7 @@ export const TrackCard: React.FC<TrackCardProps> = ({
   onPlay,
   onTogglePin,
   onDelete,
+  onReport,
 }) => {
   const formatDuration = (ms: number) => {
     if (!ms) return '0:00';
@@ -57,22 +59,36 @@ export const TrackCard: React.FC<TrackCardProps> = ({
       {/* Play Button & Title Section */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
         <button
-          onClick={onPlay}
+          onClick={track.blocked ? undefined : onPlay}
+          disabled={track.blocked}
+          title={track.blocked ? `Blocked: ${track.block_reason || 'Policy violation'}` : (isActiveTrack && isPlaying ? 'Pause' : 'Play')}
           style={{
             width: '42px',
             height: '42px',
             borderRadius: 'var(--radius-full)',
-            backgroundColor: isActiveTrack && isPlaying ? 'var(--accent-emerald)' : 'var(--bg-card)',
-            color: isActiveTrack && isPlaying ? '#000' : 'var(--text-primary)',
-            border: '1px solid var(--border-glass)',
+            backgroundColor: track.blocked
+              ? 'rgba(244, 63, 94, 0.15)'
+              : isActiveTrack && isPlaying
+              ? 'var(--accent-emerald)'
+              : 'var(--bg-card)',
+            color: track.blocked
+              ? 'var(--accent-rose)'
+              : isActiveTrack && isPlaying
+              ? '#000'
+              : 'var(--text-primary)',
+            border: track.blocked ? '1px solid rgba(244, 63, 94, 0.3)' : '1px solid var(--border-glass)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
             transition: 'all 0.15s ease',
+            cursor: track.blocked ? 'not-allowed' : 'pointer',
+            opacity: track.blocked ? 0.7 : 1,
           }}
         >
-          {isActiveTrack && isPlaying ? (
+          {track.blocked ? (
+            <Ban size={18} />
+          ) : isActiveTrack && isPlaying ? (
             <Pause size={18} style={{ fill: 'currentColor' }} />
           ) : (
             <Play size={18} style={{ fill: 'currentColor', marginLeft: '2px' }} />
@@ -85,7 +101,8 @@ export const TrackCard: React.FC<TrackCardProps> = ({
               style={{
                 fontSize: '0.95rem',
                 fontWeight: 600,
-                color: isActiveTrack ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                color: track.blocked ? 'var(--text-muted)' : isActiveTrack ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                textDecoration: track.blocked ? 'line-through' : 'none',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -93,7 +110,12 @@ export const TrackCard: React.FC<TrackCardProps> = ({
             >
               {track.title}
             </h3>
-            {track.signature && (
+            {track.blocked && (
+              <span title={track.block_reason || 'Content blocked by policy'}>
+                <Badge variant="rose">BLOCKED</Badge>
+              </span>
+            )}
+            {track.signature && !track.blocked && (
               <span title="Cryptographically signed with Ed25519" style={{ display: 'inline-flex', alignItems: 'center' }}>
                 <ShieldCheck
                   size={14}
@@ -188,6 +210,23 @@ export const TrackCard: React.FC<TrackCardProps> = ({
           >
             <Trash2 size={16} />
           </button>
+
+          {onReport && (
+            <button
+              onClick={onReport}
+              title="Report track policy violation"
+              style={{
+                padding: '8px',
+                borderRadius: 'var(--radius-md)',
+                color: 'var(--text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Flag size={16} />
+            </button>
+          )}
         </div>
       </div>
     </div>

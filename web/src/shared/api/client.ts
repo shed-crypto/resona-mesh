@@ -1,4 +1,4 @@
-import type { Track, Manifest, TrackListResponse } from '../../types/track';
+import type { Track, Manifest, TrackListResponse, Report, Decision, BlockedItem } from '../../types/track';
 import type { NodeStatus, PeerRecord, StorageUsage, NodeSettings } from '../../types/node';
 
 const API_BASE = '/api/v1';
@@ -141,7 +141,51 @@ export const apiClient = {
     return res.json();
   },
 
+  async submitReport(params: {
+    content_id: string;
+    payload_hash?: string;
+    reason_code: string;
+    description: string;
+    evidence_reference?: string;
+  }): Promise<Report> {
+    const res = await fetch(`${API_BASE}/reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to submit report');
+    }
+    return res.json();
+  },
+
+  async getReports(): Promise<{ items: Report[]; total: number }> {
+    const res = await fetch(`${API_BASE}/reports`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch reports: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async getDecisions(): Promise<{ items: Decision[]; total: number }> {
+    const res = await fetch(`${API_BASE}/moderation/decisions`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch decisions: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async getBlocked(): Promise<{ items: BlockedItem[]; total: number }> {
+    const res = await fetch(`${API_BASE}/moderation/blocked`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch blocked content: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
   getStreamUrl(id: string): string {
     return `${API_BASE}/stream/${id}`;
   },
 };
+
