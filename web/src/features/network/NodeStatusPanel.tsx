@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { HardDrive, Key, Activity, Clock, Radio, Settings, UserPlus } from 'lucide-react';
+import { HardDrive, Key, Activity, Clock, Radio, Settings, UserPlus, Share2, Check } from 'lucide-react';
 import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
 import { Badge } from '../../shared/components/Badge';
 import { ConnectPeerModal } from './ConnectPeerModal';
@@ -9,6 +9,17 @@ export const NodeStatusPanel: React.FC = () => {
   const { status, loading, error, refresh } = useNodeStatus();
   const [isConnectOpen, setIsConnectOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [copiedAddress, setCopiedAddress] = useState(false);
+
+  const dialableAddrs = (status?.listen_addrs || []).filter(Boolean);
+  const primaryAddr = dialableAddrs.find((a) => !a.includes('/127.0.0.1/') && !a.includes('/169.254.')) || dialableAddrs[0];
+
+  const handleCopyMyAddress = () => {
+    if (!primaryAddr) return;
+    navigator.clipboard.writeText(primaryAddr);
+    setCopiedAddress(true);
+    setTimeout(() => setCopiedAddress(false), 2500);
+  };
 
   const formatBytes = (bytes: number) => {
     if (bytes < 1024 * 1024) {
@@ -122,6 +133,38 @@ export const NodeStatusPanel: React.FC = () => {
           </span>
           <UserPlus size={12} style={{ color: 'var(--text-muted)', marginLeft: '2px' }} />
         </button>
+
+        {/* Quick Multiaddress Copy Button */}
+        {primaryAddr && (
+          <button
+            type="button"
+            onClick={handleCopyMyAddress}
+            title={copiedAddress ? 'Адресу скопійовано!' : `Скопіювати адресу вузла для прямого з'єднання:\n${primaryAddr}`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              background: copiedAddress ? 'rgba(16, 185, 129, 0.15)' : 'none',
+              border: copiedAddress ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(255, 255, 255, 0.08)',
+              padding: '2px 8px',
+              borderRadius: 'var(--radius-sm)',
+              cursor: 'pointer',
+              color: copiedAddress ? 'var(--accent-emerald)' : 'var(--text-secondary)',
+              transition: 'all 0.2s',
+            }}
+            onMouseEnter={(e) => {
+              if (!copiedAddress) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+            }}
+            onMouseLeave={(e) => {
+              if (!copiedAddress) e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
+            {copiedAddress ? <Check size={13} /> : <Share2 size={13} style={{ color: 'var(--accent-sky)' }} />}
+            <span style={{ fontSize: '0.75rem', fontWeight: 500 }}>
+              {copiedAddress ? 'Скопійовано!' : 'Копіювати адресу'}
+            </span>
+          </button>
+        )}
 
         {/* Node Identity Key */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }} title={`Full Key: ${status.publisher_key}`}>
