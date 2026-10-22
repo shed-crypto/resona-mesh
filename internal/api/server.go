@@ -156,7 +156,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/moderation/decisions", s.handleCreateDecision)
 	s.mux.HandleFunc("GET /api/v1/moderation/blocked", s.handleListBlocked)
 
-	if webHandler, err := web.DistHandler(); err == nil {
+	if s.cfg.Headless {
+		s.mux.HandleFunc("GET /", s.handleHeadlessStatusPage)
+	} else if webHandler, err := web.DistHandler(); err == nil {
 		s.mux.Handle("/", webHandler)
 	}
 }
@@ -248,6 +250,10 @@ func (s *Server) handleGetManifest(w http.ResponseWriter, r *http.Request) {
 
 // handlePinTrack toggles or sets the local pinning status of a track with storage quota validation.
 func (s *Server) handlePinTrack(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "headless relay mode active: mutations are disabled")
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeJSONError(w, http.StatusBadRequest, "track id is required")
@@ -302,6 +308,10 @@ func (s *Server) handlePinTrack(w http.ResponseWriter, r *http.Request) {
 
 // handleUnpinTrack unpins a track, permitting its cached blocks to be evicted under storage pressure.
 func (s *Server) handleUnpinTrack(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "headless relay mode active: mutations are disabled")
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeJSONError(w, http.StatusBadRequest, "track id is required")
@@ -325,6 +335,10 @@ func (s *Server) handleUnpinTrack(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteTrack removes a track from the catalog.
 func (s *Server) handleDeleteTrack(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "headless relay mode active: mutations are disabled")
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeJSONError(w, http.StatusBadRequest, "track id is required")
@@ -348,6 +362,10 @@ func (s *Server) handleDeleteTrack(w http.ResponseWriter, r *http.Request) {
 
 // handleImportTrack handles multipart/form-data upload of an audio file and creates catalog entries.
 func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "headless relay mode active: mutations are disabled")
+		return
+	}
 	// 500 MB max request body
 	r.Body = http.MaxBytesReader(w, r.Body, 500<<20)
 
@@ -596,6 +614,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateSettings dynamically adjusts configurable node daemon settings.
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "headless relay mode active: mutations are disabled")
+		return
+	}
 	var req struct {
 		StorageQuotaBytes *int64 `json:"storage_quota_bytes"`
 		KeeperEnabled     *bool  `json:"keeper_enabled"`
@@ -835,3 +857,259 @@ func (s *Server) handleListBlocked(w http.ResponseWriter, r *http.Request) {
 		"total": len(blocked),
 	})
 }
+
+// handleHeadlessStatusPage renders an audio-grade dark status page for headless swarm relays.
+func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	peerID := "unknown"
+	if s.p2pHost != nil {
+		peerID = s.p2pHost.ID().String()
+	}
+
+	connectedPeers := 0
+	if s.peerTracker != nil {
+		for _, p := range s.peerTracker.Peers() {
+			if p.Connected {
+				connectedPeers++
+			}
+		}
+	}
+
+	totalTracks, _, _ := s.catalog.Stats(r.Context())
+
+	html := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ResonaMesh &bull; Swarm Relay Node</title>
+    <style>
+        :root {
+            --bg: #0b0d10;
+            --surface: #14171d;
+            --border: #232834;
+            --text-main: #f0f3f6;
+            --text-muted: #8b949e;
+            --accent: #00ffcc;
+            --accent-glow: rgba(0, 255, 204, 0.15);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: var(--bg);
+            color: var(--text-main);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+        .container {
+            max-width: 680px;
+            width: 100%%;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 36px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #00ffcc 0%%, #0077ff 100%%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: #0b0d10;
+            font-size: 20px;
+        }
+        .brand h1 {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            background: var(--accent-glow);
+            color: var(--accent);
+            border: 1px solid rgba(0, 255, 204, 0.3);
+        }
+        .badge-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%%;
+            background-color: var(--accent);
+            box-shadow: 0 0 8px var(--accent);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%% { opacity: 1; transform: scale(1); }
+            50%% { opacity: 0.4; transform: scale(0.85); }
+            100%% { opacity: 1; transform: scale(1); }
+        }
+        .lead {
+            color: var(--text-muted);
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 28px;
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-item {
+            background: #0d0f14;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+        }
+        .stat-val {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+        .stat-lbl {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        .card {
+            background: #0d0f14;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 24px;
+        }
+        .label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        .code-box {
+            background: #050608;
+            border: 1px solid #1c212b;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace;
+            font-size: 13px;
+            color: var(--accent);
+            word-break: break-all;
+        }
+        .security-note {
+            background: rgba(255, 170, 0, 0.08);
+            border: 1px solid rgba(255, 170, 0, 0.25);
+            border-radius: 8px;
+            padding: 14px 16px;
+            font-size: 12px;
+            color: #ffd280;
+            line-height: 1.5;
+            margin-bottom: 24px;
+        }
+        .footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        .footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="brand">
+                <div class="logo-icon">&#x223F;</div>
+                <div>
+                    <h1>ResonaMesh</h1>
+                    <div style="font-size: 12px; color: var(--text-muted);">Decentralized Audio Swarm Relay</div>
+                </div>
+            </div>
+            <div class="badge">
+                <div class="badge-dot"></div>
+                SWARM RELAY ONLINE
+            </div>
+        </div>
+
+        <p class="lead">
+            This node operates as an autonomous, zero-storage bootstrap beacon and packet routing relay for the 
+            ResonaMesh decentralized peer-to-peer audio network.
+        </p>
+
+        <div class="stat-grid">
+            <div class="stat-item">
+                <div class="stat-val">%d</div>
+                <div class="stat-lbl">Connected Peers</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val">%d</div>
+                <div class="stat-lbl">Tracks Indexed</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-val">%s</div>
+                <div class="stat-lbl">Version</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="label">Swarm Peer Identity (LibP2P)</div>
+            <div class="code-box">%s</div>
+        </div>
+
+        <div class="security-note">
+            <strong>Headless Relay Mode Active:</strong> Interactive web mutations (audio file uploads, track deletions, 
+            and configuration updates) are disabled on this public endpoint to protect node integrity.
+        </div>
+
+        <div class="footer">
+            <span>ResonaMesh Autonomous Swarm Protocol</span>
+            <a href="/api/v1/node/status" target="_blank">View JSON Metrics &rarr;</a>
+        </div>
+    </div>
+</body>
+</html>`, connectedPeers, totalTracks, AppVersion, peerID)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(html))
+}
+
