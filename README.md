@@ -21,38 +21,38 @@ Developed as a Bachelor's Thesis in Software Engineering at the Faculty of Infor
 ## Architectural Overview
 
 ```
-                      +---------------------------------------+
-                      |       Web Frontend (React / Vite)     |
-                      |  - Dark DAW-grade Studio UI           |
-                      |  - Dual-buffer timeline (P2P vs Play) |
-                      |  - Media Session API controller       |
-                      +-------------------+-------------------+
+                   +---------------------------------------------+
+                   |         Web Frontend (React / Vite)         |
+                   |     - Dark DAW-grade Studio UI              |
+                   |     - Dual-buffer timeline (P2P vs Play)    |
+                   |     - Media Session API controller          |
+                   +----------------------+----------------------+
                                           | HTTP / SSE (127.0.0.1:8080)
                                           v
 +-----------------------------------------------------------------------------------+
 |                        ResonaMesh Core Node (Go Backend)                          |
 |                                                                                   |
-|  +--------------------+   +---------------------+   +--------------------------+  |
-|  |    internal/api    |   |   internal/audio    |   |     internal/storage     |  |
-|  | - REST Handlers    |   | - 256 KiB Chunker   |   | - SQLite + FTS5 Catalog  |  |
-|  | - SSE Event Stream |   | - Range Streamer    |   | - Disk Block Cache (LRU) |  |
-|  +--------------------+   +---------------------+   +--------------------------+  |
-|                                     |                                             |
-|                                     v                                             |
-|                      +------------------------------+                             |
-|                      |         internal/p2p         |                             |
-|                      |  - go-libp2p Host            |                             |
-|                      |  - Noise Handshake & Yamux   |                             |
-|                      |  - mDNS LAN Peer Discovery   |                             |
-|                      |  - Block Exchange Protocol   |                             |
-|                      +--------------+---------------+                             |
-+-------------------------------------|---------------------------------------------+
-                                      | libp2p (/resonamesh/*/1.0.0)
-                                      v
-                             +-----------------+
-                             |    P2P Swarm    |
-                             | Connected Peers |
-                             +-----------------+
+|  +-----------------------+  +-----------------------+  +-----------------------+  |
+|  |     internal/api      |  |    internal/audio     |  |   internal/storage    |  |
+|  |  - REST API Handlers  |  |  - 256 KiB Chunker    |  |  - SQLite + FTS5 DB   |  |
+|  |  - SSE Event Stream   |  |  - Range Streamer     |  |  - Disk Cache (LRU)   |  |
+|  +-----------------------+  +-----------+-----------+  +-----------------------+  |
+|                                         |                                         |
+|                                         v                                         |
+|                            +-------------------------+                            |
+|                            |      internal/p2p       |                            |
+|                            |  - go-libp2p Host       |                            |
+|                            |  - Noise & Yamux Conn   |                            |
+|                            |  - mDNS Peer Discovery  |                            |
+|                            |  - Block Exchange Wire  |                            |
+|                            +------------+------------+                            |
++-----------------------------------------|-----------------------------------------+
+                                          | libp2p (/resonamesh/*/1.0.0)
+                                          v
+                                +-------------------+
+                                |     P2P Swarm     |
+                                |  Connected Peers  |
+                                +-------------------+
 ```
 
 ---
