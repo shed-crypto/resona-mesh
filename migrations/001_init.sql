@@ -21,15 +21,16 @@ CREATE TABLE IF NOT EXISTS tracks (
 );
 
 CREATE TABLE IF NOT EXISTS blocks (
-    block_hash TEXT PRIMARY KEY,
     content_id TEXT NOT NULL,
     block_index INTEGER NOT NULL,
+    block_hash TEXT NOT NULL,
     size_bytes INTEGER NOT NULL,
     is_stored INTEGER NOT NULL DEFAULT 0,
     last_accessed_at INTEGER NOT NULL,
+    PRIMARY KEY(content_id, block_index),
     FOREIGN KEY(content_id) REFERENCES tracks(content_id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_blocks_content_ordinal ON blocks(content_id, block_index);
+CREATE INDEX IF NOT EXISTS idx_blocks_hash ON blocks(block_hash);
 CREATE INDEX IF NOT EXISTS idx_tracks_created_at ON tracks(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_blocks_stored ON blocks(is_stored);
