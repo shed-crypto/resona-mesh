@@ -130,6 +130,37 @@ func NewEngine(db *storage.DB, cfg Config, nodeKey ed25519.PrivateKey) (*Engine,
 	}, nil
 }
 
+// Config returns a copy of the engine configuration.
+func (e *Engine) Config() Config {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.cfg
+}
+
+// StoreReceivedReport persists an incoming authenticated report from another peer.
+func (e *Engine) StoreReceivedReport(ctx context.Context, r *protocol.ReportEvent) error {
+	eventID := protocol.ReportEventID(r)
+	query := `
+	INSERT OR IGNORE INTO reports (
+		event_id, content_id, payload_hash, reporter_key, reason_code,
+		description, evidence_ref, created_at, nonce, signature, status
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RECEIVED')`
+
+	_, err := e.db.Raw().ExecContext(ctx, query,
+		eventID,
+		r.ContentID,
+		r.PayloadHash,
+		r.ReporterKeyHex,
+		r.ReasonCode,
+		r.Description,
+		r.EvidenceReference,
+		r.CreatedAt,
+		r.Nonce,
+		r.Signature,
+	)
+	return err
+}
+
 // SetTrustedModeratorKey updates the trusted moderator public key in memory.
 func (e *Engine) SetTrustedModeratorKey(pub ed25519.PublicKey) {
 	e.mu.Lock()
