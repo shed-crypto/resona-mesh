@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
+	manet "github.com/multiformats/go-multiaddr/net"
 )
 
 const (
@@ -67,16 +68,35 @@ func (pe *PeerExchange) handleStream(s network.Stream) {
 			continue
 		}
 		addrs := pe.host.raw.Peerstore().Addrs(pID)
-		if len(addrs) > 0 {
-			// Append circuit relay fallback route through this host so remote NAT peers can traverse
-			if !pe.disableRelay {
-				if circuitAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/p2p/%s/p2p-circuit", myID)); err == nil {
-					addrs = append(addrs, circuitAddr)
+
+		// Observed WAN IP extraction:
+		// Extract observed remote IP from active connections to this peer (similar to BitTorrent tracker observed IP)
+		for _, c := range pe.host.raw.Network().ConnsToPeer(pID) {
+			remote := c.RemoteMultiaddr()
+			if ip, err := manet.ToIP(remote); err == nil && !manet.IsIPLoopback(remote) {
+				if ipMA, err := manet.FromIP(ip); err == nil {
+					for _, baseAddr := range pe.host.raw.Peerstore().Addrs(pID) {
+						if tail := extractTransportTail(baseAddr); tail != nil {
+							addrs = append(addrs, ipMA.Encapsulate(tail))
+						}
+					}
+					addrs = append(addrs, remote)
 				}
 			}
+		}
+
+		// Append circuit relay fallback route through this host so remote NAT peers can traverse
+		if !pe.disableRelay {
+			if circuitAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/p2p/%s/p2p-circuit", myID)); err == nil {
+				addrs = append(addrs, circuitAddr)
+			}
+		}
+
+		uniqueAddrs := deduplicateMultiaddrs(addrs)
+		if len(uniqueAddrs) > 0 {
 			peersList = append(peersList, peer.AddrInfo{
 				ID:    pID,
-				Addrs: addrs,
+				Addrs: uniqueAddrs,
 			})
 		}
 	}
@@ -120,6 +140,7 @@ func (pe *PeerExchange) QueryPeers(ctx context.Context, target peer.ID) ([]peer.
 				pi.Addrs = append(pi.Addrs, circuitAddr)
 			}
 		}
+		pi.Addrs = deduplicateMultiaddrs(pi.Addrs)
 
 		dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := pe.host.Connect(dialCtx, pi)
@@ -137,4 +158,35 @@ func (pe *PeerExchange) QueryPeers(ctx context.Context, target peer.ID) ([]peer.
 	}
 
 	return connected, nil
+}
+
+func extractTransportTail(a multiaddr.Multiaddr) multiaddr.Multiaddr {
+	comps := multiaddr.Split(a)
+	if len(comps) <= 1 {
+		return nil
+	}
+	if comps[0].Protocol().Code != multiaddr.P_IP4 && comps[0].Protocol().Code != multiaddr.P_IP6 {
+		return nil
+	}
+	var tail []multiaddr.Multiaddrer
+	for i := 1; i < len(comps); i++ {
+		tail = append(tail, &comps[i])
+	}
+	return multiaddr.Join(tail...)
+}
+
+func deduplicateMultiaddrs(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+	seen := make(map[string]bool, len(addrs))
+	var out []multiaddr.Multiaddr
+	for _, a := range addrs {
+		if a == nil {
+			continue
+		}
+		s := a.String()
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, a)
+		}
+	}
+	return out
 }

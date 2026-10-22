@@ -165,14 +165,21 @@ func main() {
 		if err == nil {
 			hostConfig.ListenAddrs = []string{
 				fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
+				fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.P2PPort),
 				fmt.Sprintf("/ip4/%s/tcp/%s/ws", h, portStr),
 			}
 			hostConfig.HTTPHandler = apiServer.Handler()
 		} else {
-			hostConfig.ListenAddr = fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
+			hostConfig.ListenAddrs = []string{
+				fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
+				fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.P2PPort),
+			}
 		}
 	} else {
-		hostConfig.ListenAddr = fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
+		hostConfig.ListenAddrs = []string{
+			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
+			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.P2PPort),
+		}
 	}
 
 	p2pHost, err := p2p.NewHost(hostConfig)
