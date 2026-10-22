@@ -567,6 +567,7 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		"uptime_seconds":      int64(time.Since(s.startTime).Seconds()),
 		"peer_id":             p2pPeerID,
 		"listen_addrs":        listenAddrs,
+		"is_moderator":        s.moderatorKey != nil,
 	})
 }
 

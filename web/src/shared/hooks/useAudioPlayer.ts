@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Track } from '../../types/track';
 import { apiClient } from '../api/client';
 import { generateCoverDataUri } from '../utils/artwork';
+import { recordLocalPlay } from './useRecommendations';
 
 export type PlayerState = 'idle' | 'connecting' | 'buffering' | 'playing' | 'paused' | 'stalled';
 
@@ -72,6 +73,10 @@ export function useAudioPlayer() {
     };
 
     const onEnded = () => {
+      if (currentTrackRef.current) {
+        recordLocalPlay(currentTrackRef.current.content_id, true);
+      }
+
       if (isRepeatRef.current) {
         audio.currentTime = 0;
         audio.play().catch(console.error);
@@ -147,6 +152,7 @@ export function useAudioPlayer() {
     const streamUrl = apiClient.getStreamUrl(track.content_id);
     audio.src = streamUrl;
     audio.load();
+    recordLocalPlay(track.content_id, false);
 
     try {
       await audio.play();

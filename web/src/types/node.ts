@@ -20,6 +20,7 @@ export interface NodeStatus {
   uptime_seconds: number;
   peer_id?: string;
   listen_addrs?: string[];
+  is_moderator?: boolean;
 }
 
 export interface StorageUsage {

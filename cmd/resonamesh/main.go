@@ -424,8 +424,14 @@ func main() {
 	apiServer.SetPeerTracker(peerTracker)
 	apiServer.SetSyncer(syncer)
 	apiServer.SetQuotaManager(qm)
-	apiServer.SetP2PHost(p2pHost)
-	apiServer.SetModerationEngine(modEngine, nil)
+	var modKey ed25519.PrivateKey
+	nodePubHex := crypto.PublicKeyToHex(privKey.Public().(ed25519.PublicKey))
+	if cfg.TrustedModeratorPubKey == "" || strings.EqualFold(nodePubHex, cfg.TrustedModeratorPubKey) {
+		modKey = privKey
+		slog.Info("Node is authorized as active moderation authority", "moderator_key", nodePubHex)
+	}
+
+	apiServer.SetModerationEngine(modEngine, modKey)
 
 	serverErrors := make(chan error, 1)
 	if !cfg.Headless || hostConfig.HTTPHandler == nil {
