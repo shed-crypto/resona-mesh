@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
@@ -205,6 +206,43 @@ func main() {
 	// Register P2P Peer Exchange (PEX) wire protocol for swarm relay discovery
 	pexHandler := p2p.NewPeerExchange(p2pHost, peerTracker)
 	pexHandler.SetDisableRelay(cfg.DisableRelay)
+
+	// Subscribe to event bus for reachability and UPnP address updates
+	if sub, err := p2pHost.Raw().EventBus().Subscribe([]any{
+		new(event.EvtLocalAddressesUpdated),
+		new(event.EvtLocalReachabilityChanged),
+	}); err == nil {
+		go func() {
+			defer sub.Close()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case e, ok := <-sub.Out():
+					if !ok {
+						return
+					}
+					switch evt := e.(type) {
+					case event.EvtLocalAddressesUpdated:
+						var addrs []string
+						for _, a := range evt.Current {
+							addrs = append(addrs, a.Address.String())
+						}
+						slog.Info("P2P local addresses updated (UPnP/Observed)", "addrs", addrs)
+					case event.EvtLocalReachabilityChanged:
+						reach := "Unknown"
+						switch evt.Reachability {
+						case network.ReachabilityPublic:
+							reach = "Public (Directly Reachable)"
+						case network.ReachabilityPrivate:
+							reach = "Private (Behind NAT)"
+						}
+						slog.Info("P2P network reachability updated", "reachability", reach)
+					}
+				}
+			}
+		}()
+	}
 
 	// Register universal swarm network connection listener
 	p2pHost.Network().Notify(&network.NotifyBundle{
