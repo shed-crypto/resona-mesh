@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/shed-crypto/resona-mesh/pkg/crypto"
+	"resonamesh/pkg/crypto"
 )
 
 func TestKeyPairGeneration(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/shed-crypto/resona-mesh/pkg/protocol"
+	"resonamesh/pkg/protocol"
 )
 
 var (
