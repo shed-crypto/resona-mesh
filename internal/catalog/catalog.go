@@ -238,6 +238,91 @@ func (c *Catalog) GetManifest(ctx context.Context, contentID string) (*protocol.
 	}, nil
 }
 
+// ListManifests returns up to 100 track manifests currently registered in the catalog.
+func (c *Catalog) ListManifests(ctx context.Context) ([]*protocol.Manifest, error) {
+	rows, err := c.db.Raw().QueryContext(ctx, "SELECT content_id FROM tracks ORDER BY created_at DESC LIMIT 100")
+	if err != nil {
+		return nil, fmt.Errorf("catalog: failed to list track IDs: %w", err)
+	}
+	defer rows.Close()
+
+	var manifests []*protocol.Manifest
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		m, err := c.GetManifest(ctx, id)
+		if err != nil {
+			continue
+		}
+		manifests = append(manifests, m)
+	}
+	return manifests, nil
+}
+
+// RegisterRemoteManifest inserts an authenticated swarm manifest with unseeded local blocks.
+func (c *Catalog) RegisterRemoteManifest(ctx context.Context, m *protocol.Manifest) error {
+	var exists int
+	err := c.db.Raw().QueryRowContext(ctx, "SELECT 1 FROM tracks WHERE content_id = ?", m.ContentID).Scan(&exists)
+	if err == nil {
+		return nil // already known in local catalog
+	}
+
+	now := time.Now().Unix()
+	tx, err := c.db.Raw().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("catalog: failed to start transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	insertTrackSQL := `
+	INSERT INTO tracks (
+		content_id, title, artist, description, duration_ms, bitrate_kbps,
+		total_size_bytes, block_size, block_count, publisher_key, published_at,
+		license_code, signature, pinned, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+
+	_, err = tx.ExecContext(ctx, insertTrackSQL,
+		m.ContentID,
+		m.Title,
+		m.Artist,
+		"",
+		m.DurationMs,
+		m.BitrateKbps,
+		m.TotalSizeBytes,
+		m.BlockSize,
+		len(m.BlockHashes),
+		m.PublisherKeyHex,
+		m.PublishedAt,
+		m.LicenseCode,
+		m.Signature,
+		now,
+	)
+	if err != nil {
+		return fmt.Errorf("catalog: failed to insert remote track: %w", err)
+	}
+
+	insertBlockSQL := `
+	INSERT INTO blocks (
+		content_id, block_index, block_hash, size_bytes, is_stored, last_accessed_at
+	) VALUES (?, ?, ?, 0, 0, ?)`
+
+	stmtBlock, err := tx.PrepareContext(ctx, insertBlockSQL)
+	if err != nil {
+		return fmt.Errorf("catalog: failed to prepare block statement: %w", err)
+	}
+	defer stmtBlock.Close()
+
+	for idx, hash := range m.BlockHashes {
+		if _, err := stmtBlock.ExecContext(ctx, m.ContentID, idx, hash, now); err != nil {
+			return fmt.Errorf("catalog: failed to insert remote block: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 // GetTrackBlockHashes returns the ordered sequence of chunk hashes for a track.
 func (c *Catalog) GetTrackBlockHashes(ctx context.Context, contentID string) ([]string, error) {
 	query := "SELECT block_hash FROM blocks WHERE content_id = ? ORDER BY block_index ASC"
