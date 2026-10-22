@@ -28,7 +28,7 @@ const (
 	MaxBlockRequestSize = 64 * 1024
 
 	// StreamTimeout limits the duration of an individual block wire exchange.
-	StreamTimeout = 10 * time.Second
+	StreamTimeout = 20 * time.Second
 )
 
 var (
