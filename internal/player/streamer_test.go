@@ -210,3 +210,80 @@ func TestStreamerErrors(t *testing.T) {
 		t.Fatalf("expected 416 for out-of-bounds range, got %d", rangeRec.Result().StatusCode)
 	}
 }
+
+type mockStreamFetcher struct {
+	fetchedBlock []byte
+	called       bool
+}
+
+func (m *mockStreamFetcher) FetchBlock(_ context.Context, _ string, _ int, _ string) ([]byte, error) {
+	m.called = true
+	return m.fetchedBlock, nil
+}
+
+func TestStreamerWithP2PFetcherFallback(t *testing.T) {
+	const size = 50 * 1024
+	streamer, contentID, audioData := setupTestAudio(t, size)
+
+	// Determine chunk hash from crypto
+	chunkHash := crypto.HashChunkHex(audioData)
+
+	// Access blockstore through a test-only trick: setup an empty blockstore
+	tmpDir := t.TempDir()
+	db, err := storage.Open(filepath.Join(tmpDir, "test2.db"))
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	bs, _ := storage.NewBlockStore(tmpDir)
+	cat := catalog.New(db, bs)
+	imp := importer.NewImporter(bs, db)
+
+	_, privKey, _ := crypto.GenerateKeyPair()
+	manifest, err := imp.Import(context.Background(), importer.ImportParams{
+		Title:        "Fallback Track",
+		Artist:       "P2P Artist",
+		DurationMs:   60000,
+		BitrateKbps:  192,
+		LicenseCode:  protocol.LicenseCC0,
+		PublisherKey: privKey,
+		AudioData:    bytes.NewReader(audioData),
+	})
+	if err != nil {
+		t.Fatalf("failed to import track: %v", err)
+	}
+
+	// Delete the physical chunk from blockstore to simulate missing local chunk
+	if err := bs.Delete(chunkHash); err != nil {
+		t.Fatalf("failed to delete chunk: %v", err)
+	}
+
+	fetcher := &mockStreamFetcher{
+		fetchedBlock: audioData,
+	}
+
+	testStreamer := player.NewStreamer(cat, bs)
+	testStreamer.SetFetcher(fetcher)
+
+	req := httptest.NewRequest(http.MethodGet, "/stream", nil)
+	rec := httptest.NewRecorder()
+	testStreamer.StreamTrack(rec, req, manifest.ContentID)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK after fetcher fallback, got %d", res.StatusCode)
+	}
+	if !fetcher.called {
+		t.Fatalf("expected fetcher to be called for missing chunk")
+	}
+
+	body, _ := io.ReadAll(res.Body)
+	if !bytes.Equal(body, audioData) {
+		t.Fatalf("streamed bytes mismatch after fetcher fallback")
+	}
+	_ = streamer
+	_ = contentID
+}
