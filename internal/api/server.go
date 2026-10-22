@@ -151,6 +151,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	s.mux.HandleFunc("PUT /api/v1/settings", s.handleUpdateSettings)
 	s.mux.HandleFunc("GET /api/v1/node/status", s.handleNodeStatus)
+	s.mux.HandleFunc("GET /api/v1/seeds", s.handleSeeds)
 	s.mux.HandleFunc("POST /api/v1/reports", s.handleSubmitReport)
 	s.mux.HandleFunc("GET /api/v1/reports", s.handleListReports)
 	s.mux.HandleFunc("GET /api/v1/moderation/decisions", s.handleListDecisions)
@@ -446,9 +447,11 @@ func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
+		slog.Warn("Audio stream request missing track id", "url", r.URL.String())
 		writeJSONError(w, http.StatusBadRequest, "track id is required")
 		return
 	}
+	slog.Info("Audio stream requested", "content_id", id, "method", r.Method, "range", r.Header.Get("Range"))
 	s.streamer.StreamTrack(w, r, id)
 }
 
@@ -565,6 +568,28 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		"peer_id":             p2pPeerID,
 		"listen_addrs":        listenAddrs,
 	})
+}
+
+// handleSeeds returns an array of public multiaddresses for this node as a dynamic bootstrap endpoint.
+func (s *Server) handleSeeds(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Content-Type", "application/json")
+
+	if s.p2pHost == nil {
+		_ = json.NewEncoder(w).Encode([]string{})
+		return
+	}
+
+	hostHeader := r.Host
+	hostname, _, err := net.SplitHostPort(hostHeader)
+	if err != nil {
+		hostname = hostHeader
+	}
+
+	peerID := s.p2pHost.ID().String()
+	wanAddr := fmt.Sprintf("/dns4/%s/tcp/443/wss/p2p/%s", hostname, peerID)
+	_ = json.NewEncoder(w).Encode([]string{wanAddr})
 }
 
 // handleConnectPeer connects to a remote peer via an explicitly supplied multiaddress string.
@@ -1058,6 +1083,7 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
             border-radius: 10px;
             padding: 16px;
             margin-bottom: 20px;
+            overflow: hidden;
         }
         .card-header {
             display: flex;
@@ -1100,6 +1126,10 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
             font-size: 13px;
             color: var(--accent);
             word-break: break-all;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+            box-sizing: border-box;
+            max-width: 100%%;
         }
         .security-note {
             background: rgba(255, 170, 0, 0.08);
@@ -1176,7 +1206,7 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
                 <div class="label">Bootstrap Seeds JSON (Ready for GitHub Gist)</div>
                 <button class="copy-btn" id="btn-copy-json" onclick="copyText('gist-json', 'btn-copy-json', 'Copied JSON!')">Copy for Gist</button>
             </div>
-            <pre class="code-box" id="gist-json" style="white-space: pre;">%s</pre>
+            <pre class="code-box" id="gist-json" style="white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere; line-height: 1.5;">%s</pre>
         </div>
 
         <div class="card">

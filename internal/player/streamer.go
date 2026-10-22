@@ -123,7 +123,7 @@ func (s *Streamer) StreamTrack(w http.ResponseWriter, r *http.Request, contentID
 
 		w.WriteHeader(http.StatusOK)
 		if err := s.streamByteRange(ctx, w, contentID, blockHashes, 0, totalSize-1); err != nil {
-			slog.Debug("Audio stream terminated prematurely", "content_id", contentID, "error", err)
+			slog.Warn("Audio stream terminated prematurely", "content_id", contentID, "error", err)
 		}
 		return
 	}
@@ -147,7 +147,7 @@ func (s *Streamer) StreamTrack(w http.ResponseWriter, r *http.Request, contentID
 
 	w.WriteHeader(http.StatusPartialContent)
 	if err := s.streamByteRange(ctx, w, contentID, blockHashes, start, end); err != nil {
-		slog.Debug("Audio stream range terminated prematurely", "content_id", contentID, "error", err)
+		slog.Warn("Audio stream range terminated prematurely", "content_id", contentID, "range", fmt.Sprintf("%d-%d", start, end), "error", err)
 	}
 }
 
@@ -180,10 +180,12 @@ func (s *Streamer) streamByteRange(ctx context.Context, w http.ResponseWriter, c
 
 		chunkData, err := s.blockStore.Get(hash)
 		if err != nil {
+			slog.Info("Local chunk cache miss, fetching from swarm", "content_id", contentID, "chunk_index", b, "hash", hash)
 			if s.fetcher != nil {
 				chunkData, err = s.fetcher.FetchBlock(ctx, contentID, b, hash)
 			}
 			if err != nil {
+				slog.Warn("Audio chunk fetch failed", "content_id", contentID, "chunk_index", b, "hash", hash, "error", err)
 				return fmt.Errorf("%w: chunk index %d (hash %s)", ErrBlockNotAvailable, b, hash)
 			}
 		}

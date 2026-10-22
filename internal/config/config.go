@@ -32,6 +32,13 @@ type Config struct {
 	BootstrapSeeds         []string
 	AllowInsecureHTTP      bool
 	Headless               bool
+	DisableRelay           bool
+}
+
+// DefaultBootstrapSeeds defines canonical WAN bootstrap seed endpoints.
+var DefaultBootstrapSeeds = []string{
+	"https://resona-mesh.onrender.com/api/v1/seeds",
+	"https://gist.githubusercontent.com/shed-crypto/8d20d793034bbd91acef77bea67ce353/raw",
 }
 
 // DefaultConfig returns safe, preconfigured embedded fallback settings.
@@ -45,8 +52,10 @@ func DefaultConfig() *Config {
 		TrustedModeratorPubKey: "",
 		LogLevel:               "INFO",
 		NATPortMapEnabled:      true,
+		BootstrapSeeds:         append([]string(nil), DefaultBootstrapSeeds...),
 		AllowInsecureHTTP:      false,
 		Headless:               false,
+		DisableRelay:           false,
 	}
 }
 
@@ -110,6 +119,9 @@ func Load(envPath string, args []string) (*Config, error) {
 	if val := os.Getenv("RESONAMESH_HEADLESS"); val != "" {
 		cfg.Headless = strings.EqualFold(val, "true") || val == "1"
 	}
+	if val := os.Getenv("RESONAMESH_DISABLE_RELAY"); val != "" {
+		cfg.DisableRelay = strings.EqualFold(val, "true") || val == "1"
+	}
 
 	// 4. Override with CLI Flags if provided
 	if len(args) > 0 {
@@ -123,6 +135,7 @@ func Load(envPath string, args []string) (*Config, error) {
 		flagBootstrap := fs.String("bootstrap", "", "Comma-separated bootstrap multiaddrs or HTTP(S) endpoint URLs")
 		flagInsecureHTTP := fs.Bool("allow-insecure-http", cfg.AllowInsecureHTTP, "Allow HTTP server to bind to non-loopback addresses (container/server environments)")
 		flagHeadless := fs.Bool("headless", cfg.Headless, "Run in headless relay mode with interactive player mutations disabled")
+		flagDisableRelay := fs.Bool("disable-relay", cfg.DisableRelay, "Disable Circuit Relay fallback, requiring direct P2P connections only")
 
 		if err := fs.Parse(args); err != nil {
 			return nil, err
@@ -154,6 +167,8 @@ func Load(envPath string, args []string) (*Config, error) {
 				cfg.AllowInsecureHTTP = *flagInsecureHTTP
 			case "headless":
 				cfg.Headless = *flagHeadless
+			case "disable-relay":
+				cfg.DisableRelay = *flagDisableRelay
 			}
 		})
 	}
