@@ -99,7 +99,7 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 		default:
 		}
 
-		peerCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		peerCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		data, err := RequestBlock(peerCtx, f.host, peerID, req)
 		cancel()
 
