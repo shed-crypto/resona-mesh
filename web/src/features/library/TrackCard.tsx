@@ -128,8 +128,20 @@ export const TrackCard: React.FC<TrackCardProps> = ({
       {/* Availability & Technical Metadata */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-          <Badge variant={isFullAvailable ? 'emerald' : 'amber'}>
-            {isFullAvailable ? '100% Seeded' : `${track.availability_pct.toFixed(0)}% Cached`}
+          <Badge
+            variant={
+              isFullAvailable
+                ? 'emerald'
+                : track.availability_pct > 0
+                ? 'amber'
+                : 'neutral'
+            }
+          >
+            {isFullAvailable
+              ? '100% Seeded'
+              : track.availability_pct > 0
+              ? `${track.availability_pct.toFixed(0)}% Cached`
+              : '0% Remote Swarm'}
           </Badge>
           <span
             style={{
