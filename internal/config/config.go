@@ -35,6 +35,9 @@ type Config struct {
 	DisableRelay           bool
 }
 
+// DefaultBootstrapSeeds defines fallback bootstrap seed endpoints if none are configured.
+var DefaultBootstrapSeeds []string
+
 // DefaultConfig returns safe, preconfigured embedded fallback settings.
 func DefaultConfig() *Config {
 	return &Config{
@@ -46,6 +49,7 @@ func DefaultConfig() *Config {
 		TrustedModeratorPubKey: "",
 		LogLevel:               "INFO",
 		NATPortMapEnabled:      true,
+		BootstrapSeeds:         append([]string(nil), DefaultBootstrapSeeds...),
 		AllowInsecureHTTP:      false,
 		Headless:               false,
 		DisableRelay:           false,
