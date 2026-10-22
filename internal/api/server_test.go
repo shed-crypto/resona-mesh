@@ -952,6 +952,85 @@ func TestHeadlessRelayMode(t *testing.T) {
 	}
 }
 
+func TestTrackCoverUploadAndServe(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+
+	// 1. Prepare multipart form with audio_file and cover_file
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+
+	// Add audio
+	fw, err := w.CreateFormFile("audio_file", "test.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = fw.Write(make([]byte, 50*1024))
+
+	// Add cover
+	fc, err := w.CreateFormFile("cover_file", "artwork.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02}
+	_, _ = fc.Write(coverBytes)
+
+	_ = w.WriteField("title", "Cover Art Track")
+	_ = w.WriteField("artist", "Graphic Artist")
+	_ = w.WriteField("license", protocol.LicenseCC0)
+	_ = w.Close()
+
+	resp, err := http.Post(ts.URL+"/api/v1/tracks/import", w.FormDataContentType(), &b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 201 Created, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	var importRes struct {
+		Track catalog.Track `json:"track"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&importRes); err != nil {
+		t.Fatal(err)
+	}
+
+	if !importRes.Track.HasCover {
+		t.Fatal("expected imported track to have HasCover = true")
+	}
+
+	// 2. Fetch the cover via GET /api/v1/tracks/{id}/cover
+	coverResp, err := http.Get(ts.URL + "/api/v1/tracks/" + importRes.Track.ContentID + "/cover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer coverResp.Body.Close()
+
+	if coverResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for cover, got %d", coverResp.StatusCode)
+	}
+
+	retrievedCover, err := io.ReadAll(coverResp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(retrievedCover, coverBytes) {
+		t.Fatal("retrieved cover bytes mismatch")
+	}
+
+	// 3. Request cover for non-existent track
+	missingResp, err := http.Get(ts.URL + "/api/v1/tracks/nonexistent/cover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missingResp.Body.Close()
+	if missingResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found, got %d", missingResp.StatusCode)
+	}
+}
+
 
 
 
