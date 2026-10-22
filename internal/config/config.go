@@ -27,6 +27,7 @@ type Config struct {
 	KeeperEnabled          bool
 	TrustedModeratorPubKey string
 	LogLevel               string
+	NATPortMapEnabled      bool
 }
 
 // DefaultConfig returns safe, preconfigured embedded fallback settings.
@@ -39,6 +40,7 @@ func DefaultConfig() *Config {
 		KeeperEnabled:          false,
 		TrustedModeratorPubKey: "",
 		LogLevel:               "INFO",
+		NATPortMapEnabled:      true,
 	}
 }
 
@@ -80,6 +82,9 @@ func Load(envPath string, args []string) (*Config, error) {
 	if val := os.Getenv("RESONAMESH_LOG_LEVEL"); val != "" {
 		cfg.LogLevel = strings.ToUpper(val)
 	}
+	if val := os.Getenv("RESONAMESH_NAT_PORT_MAP"); val != "" {
+		cfg.NATPortMapEnabled = strings.EqualFold(val, "true") || val == "1"
+	}
 
 	// 3. Override with CLI Flags if provided
 	if len(args) > 0 {
@@ -89,6 +94,7 @@ func Load(envPath string, args []string) (*Config, error) {
 		flagData := fs.String("data", "", "Data directory path")
 		flagQuota := fs.Int64("quota", 0, "Storage quota in bytes")
 		flagKeeper := fs.Bool("keeper", false, "Enable automatic background replication")
+		flagNATPortMap := fs.Bool("nat-port-map", cfg.NATPortMapEnabled, "Enable automatic router port mapping via UPnP / NAT-PMP")
 
 		if err := fs.Parse(args); err != nil {
 			return nil, err
@@ -109,6 +115,11 @@ func Load(envPath string, args []string) (*Config, error) {
 		if *flagKeeper {
 			cfg.KeeperEnabled = true
 		}
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "nat-port-map" {
+				cfg.NATPortMapEnabled = *flagNATPortMap
+			}
+		})
 	}
 
 	// 4. Validate configuration bounds

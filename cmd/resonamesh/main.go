@@ -61,6 +61,7 @@ func main() {
 		"data_dir", cfg.DataDir,
 		"quota_bytes", cfg.StorageQuotaBytes,
 		"keeper_enabled", cfg.KeeperEnabled,
+		"nat_port_map", cfg.NATPortMapEnabled,
 	)
 
 	// Context with OS interrupt cancellation for graceful shutdown
@@ -133,9 +134,10 @@ func main() {
 	// 5. Initialize P2P Host and Swarm engine
 	p2pListenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
 	p2pHost, err := p2p.NewHost(p2p.HostConfig{
-		ListenAddr:   p2pListenAddr,
-		PrivateKey:   privKey,
-		DisableRelay: true,
+		ListenAddr:       p2pListenAddr,
+		PrivateKey:       privKey,
+		DisableRelay:     true,
+		EnableNATPortMap: cfg.NATPortMapEnabled,
 	})
 	if err != nil {
 		slog.Error("Failed to initialize libp2p host", "error", err)
