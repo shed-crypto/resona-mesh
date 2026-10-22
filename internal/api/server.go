@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"resonamesh/internal/catalog"
 	"resonamesh/internal/config"
 	"resonamesh/internal/importer"
+	"resonamesh/internal/moderation"
 	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
@@ -40,13 +42,15 @@ type Server struct {
 	streamer     *player.Streamer
 	peerTracker  *p2p.PeerTracker
 	syncer       Syncer
-	quotaManager *storage.QuotaManager
-	p2pHost      *p2p.Host
-	publisherKey ed25519.PrivateKey
-	startTime    time.Time
-	mux          *http.ServeMux
-	handler      http.Handler
-	httpServer   *http.Server
+	quotaManager     *storage.QuotaManager
+	p2pHost          *p2p.Host
+	moderationEngine *moderation.Engine
+	moderatorKey     ed25519.PrivateKey
+	publisherKey     ed25519.PrivateKey
+	startTime        time.Time
+	mux              *http.ServeMux
+	handler          http.Handler
+	httpServer       *http.Server
 }
 
 // NewServer initializes and wires routes and middlewares for the HTTP API.
@@ -121,6 +125,12 @@ func (s *Server) SetP2PHost(h *p2p.Host) {
 	s.p2pHost = h
 }
 
+// SetModerationEngine binds the moderation policy engine and optional local moderator private key.
+func (s *Server) SetModerationEngine(eng *moderation.Engine, modKey ed25519.PrivateKey) {
+	s.moderationEngine = eng
+	s.moderatorKey = modKey
+}
+
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tracks", s.handleListTracks)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}", s.handleGetTrack)
@@ -137,6 +147,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	s.mux.HandleFunc("PUT /api/v1/settings", s.handleUpdateSettings)
 	s.mux.HandleFunc("GET /api/v1/node/status", s.handleNodeStatus)
+	s.mux.HandleFunc("POST /api/v1/reports", s.handleSubmitReport)
+	s.mux.HandleFunc("GET /api/v1/reports", s.handleListReports)
+	s.mux.HandleFunc("GET /api/v1/moderation/decisions", s.handleListDecisions)
+	s.mux.HandleFunc("POST /api/v1/moderation/decisions", s.handleCreateDecision)
+	s.mux.HandleFunc("GET /api/v1/moderation/blocked", s.handleListBlocked)
 
 	if webHandler, err := web.DistHandler(); err == nil {
 		s.mux.Handle("/", webHandler)
@@ -163,11 +178,15 @@ func (s *Server) handleListTracks(w http.ResponseWriter, r *http.Request) {
 	pinnedVal := r.URL.Query().Get("pinned")
 	pinnedOnly := pinnedVal == "1" || strings.EqualFold(pinnedVal, "true")
 
+	incBlockedVal := r.URL.Query().Get("include_blocked")
+	includeBlocked := incBlockedVal == "1" || strings.EqualFold(incBlockedVal, "true")
+
 	tracks, total, err := s.catalog.ListTracks(r.Context(), catalog.Query{
-		Search:     q,
-		Limit:      limit,
-		Offset:     offset,
-		PinnedOnly: pinnedOnly,
+		Search:         q,
+		Limit:          limit,
+		Offset:         offset,
+		PinnedOnly:     pinnedOnly,
+		IncludeBlocked: includeBlocked,
 	})
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to query tracks")
@@ -631,5 +650,174 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 func writeJSONError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{
 		"error": message,
+	})
+}
+
+// handleSubmitReport handles submission of abuse or copyright reports.
+func (s *Server) handleSubmitReport(w http.ResponseWriter, r *http.Request) {
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	var req struct {
+		ContentID         string `json:"content_id"`
+		PayloadHash       string `json:"payload_hash"`
+		ReasonCode        string `json:"reason_code"`
+		Description       string `json:"description"`
+		EvidenceReference string `json:"evidence_reference"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json request body")
+		return
+	}
+
+	report, err := s.moderationEngine.SubmitReport(r.Context(), moderation.CreateReportParams{
+		ContentID:         req.ContentID,
+		PayloadHash:       req.PayloadHash,
+		ReasonCode:        req.ReasonCode,
+		Description:       req.Description,
+		EvidenceReference: req.EvidenceReference,
+	})
+	if err != nil {
+		if errors.Is(err, moderation.ErrMissingContentID) || errors.Is(err, moderation.ErrInvalidReasonCode) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, report)
+}
+
+// handleListReports lists outbox and received reports.
+func (s *Server) handleListReports(w http.ResponseWriter, r *http.Request) {
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	reports, err := s.moderationEngine.ListReports(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if reports == nil {
+		reports = []moderation.ReportRecord{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items": reports,
+		"total": len(reports),
+	})
+}
+
+// handleListDecisions lists moderation decisions recorded on this node.
+func (s *Server) handleListDecisions(w http.ResponseWriter, r *http.Request) {
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	decisions, err := s.moderationEngine.ListDecisions(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if decisions == nil {
+		decisions = []moderation.DecisionRecord{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items": decisions,
+		"total": len(decisions),
+	})
+}
+
+// handleCreateDecision applies or creates a moderation decision.
+func (s *Server) handleCreateDecision(w http.ResponseWriter, r *http.Request) {
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	var raw map[string]interface{}
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json payload")
+		return
+	}
+
+	// If signature is present, it's a pre-signed DecisionEvent to apply
+	if sig, ok := raw["signature"].(string); ok && sig != "" {
+		var dec protocol.DecisionEvent
+		if err := json.Unmarshal(bodyBytes, &dec); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid decision event structure")
+			return
+		}
+
+		if err := s.moderationEngine.ApplyDecision(r.Context(), &dec); err != nil {
+			if errors.Is(err, moderation.ErrUntrustedModerator) || errors.Is(err, moderation.ErrInvalidSignature) || errors.Is(err, moderation.ErrForkDetected) {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":   "applied",
+			"decision": dec,
+		})
+		return
+	}
+
+	// Otherwise, if this node holds moderator private key, create and sign a new decision
+	if s.moderatorKey == nil {
+		writeJSONError(w, http.StatusForbidden, "node is not configured with a moderator private key to sign decisions")
+		return
+	}
+
+	var params moderation.CreateDecisionParams
+	if err := json.Unmarshal(bodyBytes, &params); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid create decision params")
+		return
+	}
+
+	decision, err := s.moderationEngine.CreateDecision(r.Context(), s.moderatorKey, params)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, decision)
+}
+
+// handleListBlocked returns all content currently blocked by moderation policy.
+func (s *Server) handleListBlocked(w http.ResponseWriter, r *http.Request) {
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	blocked, err := s.moderationEngine.ListBlocked(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if blocked == nil {
+		blocked = []moderation.BlockedRecord{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items": blocked,
+		"total": len(blocked),
 	})
 }
