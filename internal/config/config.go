@@ -31,6 +31,7 @@ type Config struct {
 	NATPortMapEnabled      bool
 	BootstrapSeeds         []string
 	AllowInsecureHTTP      bool
+	Headless               bool
 }
 
 // DefaultConfig returns safe, preconfigured embedded fallback settings.
@@ -45,6 +46,7 @@ func DefaultConfig() *Config {
 		LogLevel:               "INFO",
 		NATPortMapEnabled:      true,
 		AllowInsecureHTTP:      false,
+		Headless:               false,
 	}
 }
 
@@ -105,6 +107,9 @@ func Load(envPath string, args []string) (*Config, error) {
 	if val := os.Getenv("RESONAMESH_ALLOW_INSECURE_HTTP"); val != "" {
 		cfg.AllowInsecureHTTP = strings.EqualFold(val, "true") || val == "1"
 	}
+	if val := os.Getenv("RESONAMESH_HEADLESS"); val != "" {
+		cfg.Headless = strings.EqualFold(val, "true") || val == "1"
+	}
 
 	// 4. Override with CLI Flags if provided
 	if len(args) > 0 {
@@ -117,6 +122,7 @@ func Load(envPath string, args []string) (*Config, error) {
 		flagNATPortMap := fs.Bool("nat-port-map", cfg.NATPortMapEnabled, "Enable automatic router port mapping via UPnP / NAT-PMP")
 		flagBootstrap := fs.String("bootstrap", "", "Comma-separated bootstrap multiaddrs or HTTP(S) endpoint URLs")
 		flagInsecureHTTP := fs.Bool("allow-insecure-http", cfg.AllowInsecureHTTP, "Allow HTTP server to bind to non-loopback addresses (container/server environments)")
+		flagHeadless := fs.Bool("headless", cfg.Headless, "Run in headless relay mode with interactive player mutations disabled")
 
 		if err := fs.Parse(args); err != nil {
 			return nil, err
@@ -146,6 +152,8 @@ func Load(envPath string, args []string) (*Config, error) {
 				cfg.NATPortMapEnabled = *flagNATPortMap
 			case "allow-insecure-http":
 				cfg.AllowInsecureHTTP = *flagInsecureHTTP
+			case "headless":
+				cfg.Headless = *flagHeadless
 			}
 		})
 	}

@@ -73,6 +73,7 @@ func main() {
 		"quota_bytes", cfg.StorageQuotaBytes,
 		"keeper_enabled", cfg.KeeperEnabled,
 		"nat_port_map", cfg.NATPortMapEnabled,
+		"headless", cfg.Headless,
 	)
 
 	// Context with OS interrupt cancellation for graceful shutdown
