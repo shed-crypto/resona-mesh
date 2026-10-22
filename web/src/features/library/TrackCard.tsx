@@ -1,7 +1,8 @@
 import React from 'react';
-import { Play, Pause, Pin, Trash2, ShieldCheck, Flag, Ban } from 'lucide-react';
+import { Play, Pause, Pin, Trash2, ShieldCheck, Flag, Ban, ListPlus } from 'lucide-react';
 import type { Track } from '../../types/track';
 import { Badge } from '../../shared/components/Badge';
+import { generateCoverDataUri } from '../../shared/utils/artwork';
 
 interface TrackCardProps {
   track: Track;
@@ -11,6 +12,7 @@ interface TrackCardProps {
   onTogglePin: () => void;
   onDelete: () => void;
   onReport?: () => void;
+  onAddToPlaylist?: () => void;
 }
 
 export const TrackCard: React.FC<TrackCardProps> = ({
@@ -21,6 +23,7 @@ export const TrackCard: React.FC<TrackCardProps> = ({
   onTogglePin,
   onDelete,
   onReport,
+  onAddToPlaylist,
 }) => {
   const formatDuration = (ms: number) => {
     if (!ms) return '0:00';
@@ -38,6 +41,7 @@ export const TrackCard: React.FC<TrackCardProps> = ({
   };
 
   const isFullAvailable = track.availability_pct >= 99.9;
+  const coverArtUri = generateCoverDataUri(track.content_id, track.title);
 
   return (
     <div
@@ -56,7 +60,7 @@ export const TrackCard: React.FC<TrackCardProps> = ({
         gap: '16px',
       }}
     >
-      {/* Play Button & Title Section */}
+      {/* Play Button, Cover Artwork & Title Section */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
         <button
           onClick={track.blocked ? undefined : onPlay}
@@ -94,6 +98,20 @@ export const TrackCard: React.FC<TrackCardProps> = ({
             <Play size={18} style={{ fill: 'currentColor', marginLeft: '2px' }} />
           )}
         </button>
+
+        {/* Procedural Vinyl Disc Artwork */}
+        <div
+          style={{
+            width: '42px',
+            height: '42px',
+            borderRadius: 'var(--radius-md)',
+            overflow: 'hidden',
+            border: '1px solid var(--border-glass)',
+            flexShrink: 0,
+          }}
+        >
+          <img src={coverArtUri} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        </div>
 
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -180,6 +198,27 @@ export const TrackCard: React.FC<TrackCardProps> = ({
 
         {/* Action Controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          {onAddToPlaylist && (
+            <button
+              onClick={onAddToPlaylist}
+              title="Add to Playlist"
+              style={{
+                padding: '8px',
+                borderRadius: 'var(--radius-md)',
+                color: 'var(--text-muted)',
+                backgroundColor: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'color 0.15s ease',
+              }}
+            >
+              <ListPlus size={16} />
+            </button>
+          )}
+
           <button
             onClick={onTogglePin}
             title={track.pinned ? 'Pinned (retained in storage)' : 'Pin track'}
@@ -188,6 +227,8 @@ export const TrackCard: React.FC<TrackCardProps> = ({
               borderRadius: 'var(--radius-md)',
               color: track.pinned ? 'var(--accent-emerald)' : 'var(--text-muted)',
               backgroundColor: track.pinned ? 'rgba(16, 185, 129, 0.1)' : 'transparent',
+              border: 'none',
+              cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -203,6 +244,9 @@ export const TrackCard: React.FC<TrackCardProps> = ({
               padding: '8px',
               borderRadius: 'var(--radius-md)',
               color: 'var(--text-muted)',
+              backgroundColor: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -219,6 +263,9 @@ export const TrackCard: React.FC<TrackCardProps> = ({
                 padding: '8px',
                 borderRadius: 'var(--radius-md)',
                 color: 'var(--text-muted)',
+                backgroundColor: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
