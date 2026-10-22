@@ -31,7 +31,18 @@ export function useCatalog() {
 
   useEffect(() => {
     fetchTracks();
+    const interval = setInterval(fetchTracks, 5000);
+    return () => clearInterval(interval);
   }, [fetchTracks]);
+
+  const refresh = async () => {
+    try {
+      await apiClient.syncPeers();
+    } catch {
+      // ignore sync errors if offline
+    }
+    await fetchTracks();
+  };
 
   const togglePin = async (id: string, currentPinned: boolean) => {
     try {
@@ -63,7 +74,7 @@ export function useCatalog() {
     setSearch,
     pinnedOnly,
     setPinnedOnly,
-    refresh: fetchTracks,
+    refresh,
     togglePin,
     deleteTrack,
   };

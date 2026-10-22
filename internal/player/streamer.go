@@ -18,10 +18,16 @@ var (
 	ErrBlockNotAvailable = errors.New("player: requested audio chunk not available in local cache")
 )
 
+// BlockFetcher retrieves missing audio blocks from the P2P swarm.
+type BlockFetcher interface {
+	FetchBlock(ctx context.Context, contentID string, blockIndex int, blockHash string) ([]byte, error)
+}
+
 // Streamer serves content-addressed audio streams to browser media clients via HTTP Range requests.
 type Streamer struct {
 	catalog    *catalog.Catalog
 	blockStore *storage.BlockStore
+	fetcher    BlockFetcher
 }
 
 // NewStreamer constructs an HTTP Range audio streaming handler.
@@ -30,6 +36,11 @@ func NewStreamer(cat *catalog.Catalog, bs *storage.BlockStore) *Streamer {
 		catalog:    cat,
 		blockStore: bs,
 	}
+}
+
+// SetFetcher sets the optional P2P swarm fetcher for on-demand streaming retrieval.
+func (s *Streamer) SetFetcher(f BlockFetcher) {
+	s.fetcher = f
 }
 
 // StreamTrack streams partial audio byte ranges for a specific content ID.
@@ -68,7 +79,7 @@ func (s *Streamer) StreamTrack(w http.ResponseWriter, r *http.Request, contentID
 		}
 
 		w.WriteHeader(http.StatusOK)
-		if err := s.streamByteRange(ctx, w, blockHashes, 0, totalSize-1); err != nil {
+		if err := s.streamByteRange(ctx, w, contentID, blockHashes, 0, totalSize-1); err != nil {
 			slog.Debug("Audio stream terminated prematurely", "content_id", contentID, "error", err)
 		}
 		return
@@ -92,13 +103,13 @@ func (s *Streamer) StreamTrack(w http.ResponseWriter, r *http.Request, contentID
 	}
 
 	w.WriteHeader(http.StatusPartialContent)
-	if err := s.streamByteRange(ctx, w, blockHashes, start, end); err != nil {
+	if err := s.streamByteRange(ctx, w, contentID, blockHashes, start, end); err != nil {
 		slog.Debug("Audio stream range terminated prematurely", "content_id", contentID, "error", err)
 	}
 }
 
 // streamByteRange reads the exact sequence of 256 KiB chunks and slices the requested range.
-func (s *Streamer) streamByteRange(ctx context.Context, w http.ResponseWriter, blockHashes []string, start, end int64) error {
+func (s *Streamer) streamByteRange(ctx context.Context, w http.ResponseWriter, contentID string, blockHashes []string, start, end int64) error {
 	blockSize := int64(protocol.BlockSize)
 
 	startBlock := int(start / blockSize)
@@ -118,7 +129,12 @@ func (s *Streamer) streamByteRange(ctx context.Context, w http.ResponseWriter, b
 		hash := blockHashes[b]
 		chunkData, err := s.blockStore.Get(hash)
 		if err != nil {
-			return fmt.Errorf("%w: chunk index %d (hash %s)", ErrBlockNotAvailable, b, hash)
+			if s.fetcher != nil {
+				chunkData, err = s.fetcher.FetchBlock(ctx, contentID, b, hash)
+			}
+			if err != nil {
+				return fmt.Errorf("%w: chunk index %d (hash %s)", ErrBlockNotAvailable, b, hash)
+			}
 		}
 
 		// Calculate slice offsets inside this chunk

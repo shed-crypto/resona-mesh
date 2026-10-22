@@ -1,5 +1,5 @@
 import React from 'react';
-import { HardDrive, Key, Activity, Clock } from 'lucide-react';
+import { HardDrive, Key, Activity, Clock, Radio } from 'lucide-react';
 import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
 import { Badge } from '../../shared/components/Badge';
 
@@ -84,6 +84,22 @@ export const NodeStatusPanel: React.FC = () => {
         />
         <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>ResonaMesh</span>
         <Badge variant="neutral">v{status.version}</Badge>
+      </div>
+
+      {/* P2P Swarm Peers Indicator */}
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        title="Connected libp2p swarm peers"
+      >
+        <Radio
+          size={14}
+          style={{
+            color: (status.connected_peers ?? 0) > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
+          }}
+        />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
+          {status.connected_peers ?? 0} {(status.connected_peers ?? 0) === 1 ? 'peer' : 'peers'}
+        </span>
       </div>
 
       {/* Node Identity Key */}

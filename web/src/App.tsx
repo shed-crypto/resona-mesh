@@ -92,6 +92,7 @@ export function App() {
           currentTrack={currentTrack}
           isPlaying={playerState === 'playing'}
           onPlayTrack={playTrack}
+          onTogglePlay={togglePlay}
         />
       </main>
 
