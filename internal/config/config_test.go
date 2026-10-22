@@ -27,6 +27,9 @@ func TestDefaultConfig(t *testing.T) {
 	if !cfg.NATPortMapEnabled {
 		t.Errorf("expected default NATPortMapEnabled to be true, got %v", cfg.NATPortMapEnabled)
 	}
+	if len(cfg.BootstrapSeeds) != 0 {
+		t.Errorf("expected default BootstrapSeeds to be empty, got %v", cfg.BootstrapSeeds)
+	}
 }
 
 func TestSecurityRejectionNonLoopback(t *testing.T) {
