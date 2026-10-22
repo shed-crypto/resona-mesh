@@ -123,3 +123,26 @@ func TestBootstrapSeedsConfiguration(t *testing.T) {
 	}
 }
 
+func TestHeadlessConfiguration(t *testing.T) {
+	// 1. Env variable
+	t.Setenv("RESONAMESH_HEADLESS", "true")
+	cfgEnv, err := config.Load("", nil)
+	if err != nil {
+		t.Fatalf("failed to load config with env: %v", err)
+	}
+	if !cfgEnv.Headless {
+		t.Errorf("expected Headless=true from env")
+	}
+
+	// 2. CLI flag
+	t.Setenv("RESONAMESH_HEADLESS", "false")
+	cfgCLI, err := config.Load("", []string{"--headless"})
+	if err != nil {
+		t.Fatalf("failed to load config with CLI flag: %v", err)
+	}
+	if !cfgCLI.Headless {
+		t.Errorf("expected Headless=true from CLI flag")
+	}
+}
+
+
