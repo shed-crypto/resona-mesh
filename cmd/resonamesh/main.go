@@ -15,6 +15,7 @@ import (
 	"resonamesh/internal/catalog"
 	"resonamesh/internal/config"
 	"resonamesh/internal/importer"
+	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
 	"resonamesh/pkg/crypto"
@@ -100,17 +101,49 @@ func main() {
 	imp := importer.NewImporter(bs, db)
 	str := player.NewStreamer(cat, bs)
 
-	// 5. Initialize and launch HTTP REST & streaming server
-	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
-	serverErrors := make(chan error, 1)
+	// 5. Initialize P2P Host and Swarm engine
+	p2pListenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
+	p2pHost, err := p2p.NewHost(p2p.HostConfig{
+		ListenAddr:   p2pListenAddr,
+		PrivateKey:   privKey,
+		DisableRelay: true,
+	})
+	if err != nil {
+		slog.Error("Failed to initialize libp2p host", "error", err)
+		os.Exit(1)
+	}
+	defer p2pHost.Close()
 
+	// 6. Register P2P block exchange wire protocol
+	p2p.NewProtocolHandler(p2pHost, &catalogBlockProvider{bs: bs})
+
+	// 7. Start mDNS peer discovery and tracker
+	peerTracker := p2p.NewPeerTracker()
+	discovery := p2p.NewDiscoveryService(p2pHost, peerTracker, p2p.DefaultMDNSServiceTag)
+	if err := discovery.Start(); err != nil {
+		slog.Warn("Failed to start mDNS peer discovery", "error", err)
+	}
+	defer discovery.Close()
+
+	// 8. Wire swarm fetcher into audio streamer
+	fetcher := p2p.NewFetcher(p2pHost, bs, cat)
+	str.SetFetcher(fetcher)
+
+	// 9. Initialize and launch HTTP REST & streaming server
+	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
+	apiServer.SetPeerTracker(peerTracker)
+
+	serverErrors := make(chan error, 1)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			serverErrors <- err
 		}
 	}()
 
-	slog.Info("ResonaMesh node running. Awaiting shutdown signal...", "http", cfg.HTTPAddr)
+	slog.Info("ResonaMesh node running. Awaiting shutdown signal...",
+		"http", cfg.HTTPAddr,
+		"p2p_peer_id", p2pHost.ID().String(),
+	)
 
 	select {
 	case err := <-serverErrors:
@@ -127,5 +160,13 @@ func main() {
 	}
 
 	slog.Info("ResonaMesh node shutdown completed cleanly.")
+}
+
+type catalogBlockProvider struct {
+	bs *storage.BlockStore
+}
+
+func (p *catalogBlockProvider) GetBlock(_ context.Context, _ string, _ int, blockHash string) ([]byte, error) {
+	return p.bs.Get(blockHash)
 }
 

@@ -15,6 +15,7 @@ import (
 	"resonamesh/internal/catalog"
 	"resonamesh/internal/config"
 	"resonamesh/internal/importer"
+	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/pkg/crypto"
 	"resonamesh/pkg/protocol"
@@ -29,6 +30,7 @@ type Server struct {
 	catalog      *catalog.Catalog
 	importer     *importer.Importer
 	streamer     *player.Streamer
+	peerTracker  *p2p.PeerTracker
 	publisherKey ed25519.PrivateKey
 	startTime    time.Time
 	mux          *http.ServeMux
@@ -88,6 +90,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
+// SetPeerTracker binds the P2P peer tracker for peer telemetry endpoints.
+func (s *Server) SetPeerTracker(pt *p2p.PeerTracker) {
+	s.peerTracker = pt
+}
+
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tracks", s.handleListTracks)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}", s.handleGetTrack)
@@ -96,6 +103,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/tracks/{id}", s.handleDeleteTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/import", s.handleImportTrack)
 	s.mux.HandleFunc("GET /api/v1/stream/{id}", s.handleStream)
+	s.mux.HandleFunc("GET /api/v1/peers", s.handleListPeers)
 	s.mux.HandleFunc("GET /api/v1/node/status", s.handleNodeStatus)
 
 	if webHandler, err := web.DistHandler(); err == nil {
@@ -325,6 +333,23 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	s.streamer.StreamTrack(w, r, id)
 }
 
+// handleListPeers returns active P2P swarm peers discovered or connected.
+func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
+	if s.peerTracker == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"peers": []p2p.PeerRecord{},
+			"total": 0,
+		})
+		return
+	}
+
+	peers := s.peerTracker.Peers()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"peers": peers,
+		"total": len(peers),
+	})
+}
+
 // handleNodeStatus returns runtime status, storage usage, and node publisher identity.
 func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	totalTracks, storedBytes, err := s.catalog.Stats(r.Context())
@@ -336,6 +361,15 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	pubKey := s.publisherKey.Public().(ed25519.PublicKey)
 	pubKeyHex := crypto.PublicKeyToHex(pubKey)
 
+	connectedPeers := 0
+	if s.peerTracker != nil {
+		for _, p := range s.peerTracker.Peers() {
+			if p.Connected {
+				connectedPeers++
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"version":             AppVersion,
 		"publisher_key":       pubKeyHex,
@@ -343,6 +377,7 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		"storage_quota_bytes": s.cfg.StorageQuotaBytes,
 		"storage_used_bytes":  storedBytes,
 		"total_tracks":        totalTracks,
+		"connected_peers":     connectedPeers,
 		"uptime_seconds":      int64(time.Since(s.startTime).Seconds()),
 	})
 }
