@@ -1,0 +1,34 @@
+export interface PeerRecord {
+  peer_id: string;
+  addrs: string[];
+  first_seen: string;
+  last_seen: string;
+  connected: boolean;
+}
+
+export interface NodeStatus {
+  version: string;
+  publisher_key: string;
+  data_dir: string;
+  storage_quota_bytes: number;
+  storage_used_bytes: number;
+  total_tracks: number;
+  connected_peers?: number;
+  uptime_seconds: number;
+}
+
+export interface StorageUsage {
+  quota_bytes: number;
+  stored_bytes: number;
+  reserved_bytes: number;
+  available_bytes: number;
+  pinned_bytes: number;
+  unpinned_bytes: number;
+}
+
+export interface NodeSettings {
+  storage_quota_bytes: number;
+  keeper_enabled: boolean;
+  p2p_port: number;
+  http_addr: string;
+}
