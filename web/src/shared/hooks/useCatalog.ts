@@ -10,8 +10,10 @@ export function useCatalog() {
   const [search, setSearch] = useState('');
   const [pinnedOnly, setPinnedOnly] = useState(false);
 
-  const fetchTracks = useCallback(async () => {
-    setLoading(true);
+  const fetchTracks = useCallback(async (showLoading = false) => {
+    if (showLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const res = await apiClient.getTracks({
@@ -25,13 +27,17 @@ export function useCatalog() {
       const msg = err instanceof Error ? err.message : 'Failed to fetch tracks';
       setError(msg);
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }, [search, pinnedOnly]);
 
   useEffect(() => {
-    fetchTracks();
-    const interval = setInterval(fetchTracks, 5000);
+    fetchTracks(true);
+    const interval = setInterval(() => {
+      fetchTracks(false);
+    }, 5000);
     return () => clearInterval(interval);
   }, [fetchTracks]);
 
