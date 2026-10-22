@@ -36,7 +36,9 @@ type DecisionEvent struct {
 	SchemaVersion   string `json:"schema_version"`
 	NetworkID       string `json:"network_id"`
 	PolicyID        string `json:"policy_id"`
+	PolicyEpoch     uint64 `json:"policy_epoch"`
 	ContentID       string `json:"content_id"`
+	PayloadHash     string `json:"payload_hash,omitempty"`
 	Sequence        uint64 `json:"sequence"`
 	PreviousEventID string `json:"previous_event_id"`
 	Action          string `json:"action"`
@@ -53,6 +55,7 @@ type ReportEvent struct {
 	NetworkID         string `json:"network_id"`
 	PolicyID          string `json:"policy_id"`
 	ContentID         string `json:"content_id"`
+	PayloadHash       string `json:"payload_hash,omitempty"`
 	ReporterKeyHex    string `json:"reporter_key_hex"`
 	ReasonCode        string `json:"reason_code"`
 	Description       string `json:"description"`
@@ -60,4 +63,12 @@ type ReportEvent struct {
 	CreatedAt         int64  `json:"created_at"`
 	Nonce             string `json:"nonce"`
 	Signature         string `json:"signature"`
+}
+
+// ReceiptEvent represents a cryptographically signed confirmation by a moderator that a report was received.
+type ReceiptEvent struct {
+	ReportID        string `json:"report_id"`
+	ModeratorKeyHex string `json:"moderator_key_hex"`
+	ReceivedAt      int64  `json:"received_at"`
+	Signature       string `json:"signature"`
 }
