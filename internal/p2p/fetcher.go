@@ -80,8 +80,10 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 	// 2. Discover available swarm peers
 	peers := f.host.ConnectedPeers()
 	if len(peers) == 0 {
+		slog.Warn("No connected swarm peers available to fetch block", "hash", blockHash)
 		return nil, ErrNoSwarmPeersAvailable
 	}
+	slog.Info("Querying swarm peers for block", "hash", blockHash, "index", blockIndex, "peers_count", len(peers))
 
 	req := WireBlockRequest{
 		ContentID:  contentID,
@@ -102,7 +104,7 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 		cancel()
 
 		if err != nil {
-			slog.Debug("Swarm peer failed to supply block",
+			slog.Warn("Swarm peer failed to supply block",
 				"peer_id", peerID.String(),
 				"hash", blockHash,
 				"err", err,
@@ -164,5 +166,6 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 		return data, nil
 	}
 
+	slog.Warn("Failed to fetch block from any connected peer", "hash", blockHash, "peers_tried", len(peers))
 	return nil, ErrBlockFetchFailed
 }

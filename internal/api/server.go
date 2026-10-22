@@ -447,9 +447,11 @@ func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
+		slog.Warn("Audio stream request missing track id", "url", r.URL.String())
 		writeJSONError(w, http.StatusBadRequest, "track id is required")
 		return
 	}
+	slog.Info("Audio stream requested", "content_id", id, "method", r.Method, "range", r.Header.Get("Range"))
 	s.streamer.StreamTrack(w, r, id)
 }
 
