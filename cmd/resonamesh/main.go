@@ -260,10 +260,10 @@ func main() {
 	// Trigger Google STUN resolution to discover public reflexive WAN endpoint
 	if !cfg.Headless {
 		go func() {
-			stunCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+			stunCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 			defer cancel()
-			if udpAddr, err := p2p.ResolvePublicAddr(stunCtx, p2p.DefaultSTUNServer); err == nil && udpAddr != nil {
-				slog.Info("Resolved public WAN reflexive address via Google STUN",
+			if udpAddr, err := p2p.ResolvePublicAddr(stunCtx, ""); err == nil && udpAddr != nil {
+				slog.Info("Resolved public WAN reflexive address via STUN",
 					"public_ip", udpAddr.IP.String(),
 					"public_udp_port", udpAddr.Port,
 				)

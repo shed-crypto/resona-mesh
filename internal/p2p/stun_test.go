@@ -65,3 +65,62 @@ func TestSTUNResolverMockServer(t *testing.T) {
 		t.Errorf("expected port 54321, got %d", udpAddr.Port)
 	}
 }
+
+func TestSTUNResolverFallback(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start mock UDP listener: %v", err)
+	}
+	defer pc.Close()
+
+	workingAddr := pc.LocalAddr().String()
+
+	go func() {
+		buf := make([]byte, 1024)
+		n, addr, err := pc.ReadFrom(buf)
+		if err != nil || n < 20 {
+			return
+		}
+
+		resp := make([]byte, 32)
+		binary.BigEndian.PutUint16(resp[0:2], STUNBindingResponse)
+		binary.BigEndian.PutUint16(resp[2:4], 12)
+		binary.BigEndian.PutUint32(resp[4:8], STUNMagicCookie)
+		copy(resp[8:20], buf[8:20])
+
+		binary.BigEndian.PutUint16(resp[20:22], AttrXORMappedAddress)
+		binary.BigEndian.PutUint16(resp[22:24], 8)
+		resp[24] = 0x00
+		resp[25] = 0x01
+
+		expectedPort := uint16(4001)
+		xport := expectedPort ^ uint16(STUNMagicCookie>>16)
+		binary.BigEndian.PutUint16(resp[26:28], xport)
+
+		expectedIP := net.ParseIP("198.51.100.1").To4()
+		expectedIPUint := binary.BigEndian.Uint32(expectedIP)
+		binary.BigEndian.PutUint32(resp[28:32], expectedIPUint^STUNMagicCookie)
+
+		_, _ = pc.WriteTo(resp, addr)
+	}()
+
+	origServers := DefaultSTUNServers
+	defer func() { DefaultSTUNServers = origServers }()
+
+	// First server is invalid/non-responsive, second is the mock server
+	DefaultSTUNServers = []string{"127.0.0.1:1", workingAddr}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	udpAddr, err := ResolvePublicAddr(ctx, "")
+	if err != nil {
+		t.Fatalf("expected fallback to succeed, got error: %v", err)
+	}
+	if udpAddr.IP.String() != "198.51.100.1" {
+		t.Errorf("expected IP 198.51.100.1, got %s", udpAddr.IP.String())
+	}
+	if udpAddr.Port != 4001 {
+		t.Errorf("expected port 4001, got %d", udpAddr.Port)
+	}
+}
