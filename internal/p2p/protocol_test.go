@@ -137,3 +137,72 @@ func TestProtocolBlockExchangeEndToEnd(t *testing.T) {
 		t.Fatalf("expected ErrEmptyBlockExpected, got %v", err)
 	}
 }
+
+type mockWireBlockChecker struct {
+	blocked bool
+	reason  string
+}
+
+func (m *mockWireBlockChecker) IsBlocked(_ context.Context, contentID string, _ string) (bool, string, error) {
+	return m.blocked, m.reason, nil
+}
+
+func TestProtocolBlockModerationRejection(t *testing.T) {
+	_, privA, _ := crypto.GenerateKeyPair()
+	_, privB, _ := crypto.GenerateKeyPair()
+
+	hostA, err := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privA,
+		DisableRelay: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create host A: %v", err)
+	}
+	defer hostA.Close()
+
+	hostB, err := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privB,
+		DisableRelay: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create host B: %v", err)
+	}
+	defer hostB.Close()
+
+	chunk := []byte("audio-chunk-data")
+	validHash := crypto.HashChunkHex(chunk)
+
+	provider := &memoryProvider{
+		blocks: map[string][]byte{
+			validHash: chunk,
+		},
+	}
+
+	handler := NewProtocolHandler(hostB, provider)
+	checker := &mockWireBlockChecker{
+		blocked: true,
+		reason:  "Infringing audio",
+	}
+	handler.SetBlockChecker(checker)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := hostA.Connect(ctx, hostB.AddrInfo()); err != nil {
+		t.Fatalf("failed to connect host A to B: %v", err)
+	}
+
+	req := WireBlockRequest{
+		ContentID:  "blocked-track-id",
+		BlockIndex: 0,
+		BlockHash:  validHash,
+	}
+
+	_, err = RequestBlock(ctx, hostA, hostB.ID(), req)
+	if !errors.Is(err, ErrContentBlocked) {
+		t.Fatalf("expected ErrContentBlocked for moderated track, got: %v", err)
+	}
+}
+
