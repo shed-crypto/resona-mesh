@@ -145,3 +145,55 @@ func TestBootstrapSwarmConnection(t *testing.T) {
 	}
 }
 
+func TestLiveGistAndRenderWSConnection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping live network test in short mode")
+	}
+
+	gistURL := "https://gist.githubusercontent.com/shed-crypto/8d20d793034bbd91acef77bea67ce353/raw"
+	resolver := NewSeedResolver(nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	infos, err := resolver.ResolveSeeds(ctx, []string{gistURL})
+	if err != nil {
+		t.Fatalf("failed to resolve seeds from gist: %v", err)
+	}
+	if len(infos) == 0 {
+		t.Fatalf("gist returned 0 seed peers")
+	}
+
+	t.Logf("Resolved %d peer(s) from Gist: ID=%s Addrs=%v", len(infos), infos[0].ID, infos[0].Addrs)
+
+	_, priv, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	host, err := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   priv,
+		DisableRelay: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create host: %v", err)
+	}
+	defer host.Close()
+
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer dialCancel()
+
+	start := time.Now()
+	if err := host.Connect(dialCtx, infos[0]); err != nil {
+		t.Fatalf("failed to connect to Render relay peer via Gist multiaddr: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	peers := host.ConnectedPeers()
+	t.Logf("Successfully connected to Render relay [%s] in %v! Connected peers: %v", infos[0].ID, elapsed, peers)
+	if len(peers) != 1 || peers[0] != infos[0].ID {
+		t.Fatalf("expected host to be connected to %s, got %v", infos[0].ID, peers)
+	}
+}
+
