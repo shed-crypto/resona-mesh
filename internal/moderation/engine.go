@@ -43,19 +43,19 @@ type Engine struct {
 }
 
 type CreateReportParams struct {
-	ContentID         string
-	PayloadHash       string
-	ReasonCode        string
-	Description       string
-	EvidenceReference string
+	ContentID         string `json:"content_id"`
+	PayloadHash       string `json:"payload_hash"`
+	ReasonCode        string `json:"reason_code"`
+	Description       string `json:"description"`
+	EvidenceReference string `json:"evidence_reference"`
 }
 
 type CreateDecisionParams struct {
-	ContentID   string
-	PayloadHash string
-	Action      string
-	ReasonCode  string
-	ReasonText  string
+	ContentID   string `json:"content_id"`
+	PayloadHash string `json:"payload_hash"`
+	Action      string `json:"action"`
+	ReasonCode  string `json:"reason_code"`
+	ReasonText  string `json:"reason_text"`
 }
 
 type ReportRecord struct {
