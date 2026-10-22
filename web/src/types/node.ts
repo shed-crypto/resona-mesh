@@ -17,3 +17,18 @@ export interface NodeStatus {
   uptime_seconds: number;
 }
 
+export interface StorageUsage {
+  quota_bytes: number;
+  stored_bytes: number;
+  reserved_bytes: number;
+  available_bytes: number;
+  pinned_bytes: number;
+  unpinned_bytes: number;
+}
+
+export interface NodeSettings {
+  storage_quota_bytes: number;
+  keeper_enabled: boolean;
+  p2p_port: number;
+  http_addr: string;
+}
