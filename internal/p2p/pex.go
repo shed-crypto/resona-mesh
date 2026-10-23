@@ -10,6 +10,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/multiformats/go-multiaddr"
 )
 
 const (
@@ -61,6 +62,10 @@ func (pe *PeerExchange) handleStream(s network.Stream) {
 		}
 		addrs := pe.host.raw.Peerstore().Addrs(pID)
 		if len(addrs) > 0 {
+			// Append circuit relay fallback route through this host so remote NAT peers can traverse
+			if circuitAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/p2p/%s/p2p-circuit", myID)); err == nil {
+				addrs = append(addrs, circuitAddr)
+			}
 			peersList = append(peersList, peer.AddrInfo{
 				ID:    pID,
 				Addrs: addrs,
@@ -100,8 +105,10 @@ func (pe *PeerExchange) QueryPeers(ctx context.Context, target peer.ID) ([]peer.
 		if pi.ID == pe.host.ID() || len(pe.host.raw.Network().ConnsToPeer(pi.ID)) > 0 {
 			continue
 		}
-		if len(pi.Addrs) == 0 {
-			continue
+
+		// Always ensure circuit relay fallback through target is present for NAT traversal
+		if circuitAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/p2p/%s/p2p-circuit", target)); err == nil {
+			pi.Addrs = append(pi.Addrs, circuitAddr)
 		}
 
 		dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

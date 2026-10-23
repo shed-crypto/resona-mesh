@@ -17,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	libp2pws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
+	circuitclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	circuitrelay "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/multiformats/go-multiaddr"
 )
@@ -146,7 +147,13 @@ func (h *Host) ConnectedPeers() []peer.ID {
 	return h.raw.Network().Peers()
 }
 
+// ReserveRelay attempts to reserve a circuit relay v2 slot on the specified relay peer.
+func (h *Host) ReserveRelay(ctx context.Context, relayID peer.ID) (*circuitclient.Reservation, error) {
+	return circuitclient.Reserve(ctx, h.raw, peer.AddrInfo{ID: relayID})
+}
+
 // Close gracefully closes the host, terminating active connections and streams.
 func (h *Host) Close() error {
 	return h.raw.Close()
 }
+

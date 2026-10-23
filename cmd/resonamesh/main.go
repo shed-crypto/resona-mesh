@@ -217,6 +217,15 @@ func main() {
 				}
 			}()
 
+			// Attempt circuit relay reservation so remote NAT peers can reach us via this peer
+			go func() {
+				resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
+				defer cancelRes()
+				if res, err := p2pHost.ReserveRelay(resCtx, remotePeer); err == nil && res != nil {
+					slog.Info("Active circuit relay reservation confirmed", "relay_peer", remotePeer.String())
+				}
+			}()
+
 			// Automatically query PEX to discover other swarm members (e.g. routed through relay)
 			go func() {
 				pexCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -262,6 +271,16 @@ func main() {
 		slog.Info("Starting dynamic bootstrap resolver", "seeds_count", len(cfg.BootstrapSeeds))
 		p2p.StartBootstrapLoop(ctx, p2pHost, peerTracker, cfg.BootstrapSeeds, 2*time.Minute, func(peerID peer.ID) {
 			slog.Info("WAN bootstrap peer connected, triggering auto-sync of catalog manifests", "peer_id", peerID.String())
+
+			// Attempt circuit relay reservation on bootstrap peer
+			go func() {
+				resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
+				defer cancelRes()
+				if res, err := p2pHost.ReserveRelay(resCtx, peerID); err == nil && res != nil {
+					slog.Info("Active circuit relay reservation confirmed on bootstrap relay", "relay_peer", peerID.String())
+				}
+			}()
+
 			syncCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			if count, err := syncer.SyncFromPeer(syncCtx, peerID); err != nil {
@@ -278,6 +297,26 @@ func main() {
 			}
 		})
 	}
+
+	// 9c. Periodic PEX discovery loop for continuous dynamic swarm convergence
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				for _, p := range p2pHost.ConnectedPeers() {
+					pexCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+					if discovered, err := pexHandler.QueryPeers(pexCtx, p); err == nil && len(discovered) > 0 {
+						slog.Info("Discovered and connected to swarm peers via periodic PEX", "count", len(discovered), "via", p.String())
+					}
+					cancel()
+				}
+			}
+		}
+	}()
 
 	// 10. Wire swarm fetcher into audio streamer
 	fetcher := p2p.NewFetcher(p2pHost, bs, cat)
