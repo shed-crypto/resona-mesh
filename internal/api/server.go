@@ -1058,6 +1058,7 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
             border-radius: 10px;
             padding: 16px;
             margin-bottom: 20px;
+            overflow: hidden;
         }
         .card-header {
             display: flex;
@@ -1100,6 +1101,10 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
             font-size: 13px;
             color: var(--accent);
             word-break: break-all;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+            box-sizing: border-box;
+            max-width: 100%%;
         }
         .security-note {
             background: rgba(255, 170, 0, 0.08);
@@ -1176,7 +1181,7 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
                 <div class="label">Bootstrap Seeds JSON (Ready for GitHub Gist)</div>
                 <button class="copy-btn" id="btn-copy-json" onclick="copyText('gist-json', 'btn-copy-json', 'Copied JSON!')">Copy for Gist</button>
             </div>
-            <pre class="code-box" id="gist-json" style="white-space: pre;">%s</pre>
+            <pre class="code-box" id="gist-json" style="white-space: pre-wrap; word-break: break-all; overflow-wrap: anywhere; line-height: 1.5;">%s</pre>
         </div>
 
         <div class="card">
