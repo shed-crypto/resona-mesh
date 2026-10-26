@@ -80,12 +80,21 @@ func (r *SeedResolver) ResolveSeeds(ctx context.Context, seeds []string) ([]peer
 
 // fetchFromURL retrieves and decodes a JSON list of multiaddress strings from a remote endpoint.
 func (r *SeedResolver) fetchFromURL(ctx context.Context, endpoint string) ([]peer.AddrInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	fetchURL := endpoint
+	sep := "?"
+	if strings.Contains(fetchURL, "?") {
+		sep = "&"
+	}
+	fetchURL = fmt.Sprintf("%s%s_t=%d", fetchURL, sep, time.Now().UnixNano())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: failed to construct request for %s: %w", endpoint, err)
 	}
 	req.Header.Set("User-Agent", "ResonaMesh-Bootstrap/0.1.0")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	req.Header.Set("Pragma", "no-cache")
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
