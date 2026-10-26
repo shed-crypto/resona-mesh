@@ -248,14 +248,17 @@ func StartBootstrapLoop(ctx context.Context, h *Host, tracker *PeerTracker, seed
 			slog.Info("Initial bootstrap pass connected peers", "count", count)
 		}
 
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
 		for {
+			nextInterval := interval
+			if len(h.ConnectedPeers()) == 0 {
+				nextInterval = 10 * time.Second
+			}
+			timer := time.NewTimer(nextInterval)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
+			case <-timer.C:
 				if count, err := BootstrapSwarm(ctx, h, tracker, seeds, onConnected); err != nil {
 					slog.Debug("Periodic bootstrap refresh encountered an issue", "error", err)
 				} else if count > 0 {
