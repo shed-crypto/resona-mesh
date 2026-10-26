@@ -28,8 +28,9 @@ type pexResponse struct {
 
 // PeerExchange coordinates active swarm peer discovery through connected peers and relays.
 type PeerExchange struct {
-	host    *Host
-	tracker *PeerTracker
+	host         *Host
+	tracker      *PeerTracker
+	disableRelay bool
 }
 
 // NewPeerExchange creates and registers the PEX wire protocol on the host.
@@ -40,6 +41,11 @@ func NewPeerExchange(h *Host, tracker *PeerTracker) *PeerExchange {
 	}
 	h.raw.SetStreamHandler(PEXProtocolID, pe.handleStream)
 	return pe
+}
+
+// SetDisableRelay controls whether circuit relay addresses are appended in PEX.
+func (pe *PeerExchange) SetDisableRelay(disabled bool) {
+	pe.disableRelay = disabled
 }
 
 func (pe *PeerExchange) handleStream(s network.Stream) {
@@ -63,8 +69,10 @@ func (pe *PeerExchange) handleStream(s network.Stream) {
 		addrs := pe.host.raw.Peerstore().Addrs(pID)
 		if len(addrs) > 0 {
 			// Append circuit relay fallback route through this host so remote NAT peers can traverse
-			if circuitAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/p2p/%s/p2p-circuit", myID)); err == nil {
-				addrs = append(addrs, circuitAddr)
+			if !pe.disableRelay {
+				if circuitAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/p2p/%s/p2p-circuit", myID)); err == nil {
+					addrs = append(addrs, circuitAddr)
+				}
 			}
 			peersList = append(peersList, peer.AddrInfo{
 				ID:    pID,
@@ -106,9 +114,11 @@ func (pe *PeerExchange) QueryPeers(ctx context.Context, target peer.ID) ([]peer.
 			continue
 		}
 
-		// Always ensure circuit relay fallback through target is present for NAT traversal
-		if circuitAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/p2p/%s/p2p-circuit", target)); err == nil {
-			pi.Addrs = append(pi.Addrs, circuitAddr)
+		// Ensure circuit relay fallback through target is present for NAT traversal unless disabled
+		if !pe.disableRelay {
+			if circuitAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/p2p/%s/p2p-circuit", target)); err == nil {
+				pi.Addrs = append(pi.Addrs, circuitAddr)
+			}
 		}
 
 		dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

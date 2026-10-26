@@ -80,6 +80,8 @@ func NewHost(cfg HostConfig) (*Host, error) {
 
 	if cfg.DisableRelay {
 		opts = append(opts, libp2p.DisableRelay())
+	} else {
+		opts = append(opts, libp2p.EnableHolePunching())
 	}
 	if cfg.EnableNATPortMap {
 		opts = append(opts, libp2p.NATPortMap())

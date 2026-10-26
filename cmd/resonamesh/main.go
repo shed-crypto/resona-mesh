@@ -152,7 +152,7 @@ func main() {
 	// 6. Initialize P2P Host and Swarm engine
 	hostConfig := p2p.HostConfig{
 		PrivateKey:         privKey,
-		DisableRelay:       false,
+		DisableRelay:       cfg.DisableRelay,
 		EnableRelayService: cfg.Headless,
 		EnableNATPortMap:   cfg.NATPortMapEnabled,
 	}
@@ -197,6 +197,7 @@ func main() {
 
 	// Register P2P Peer Exchange (PEX) wire protocol for swarm relay discovery
 	pexHandler := p2p.NewPeerExchange(p2pHost, peerTracker)
+	pexHandler.SetDisableRelay(cfg.DisableRelay)
 
 	// Register universal swarm network connection listener
 	p2pHost.Network().Notify(&network.NotifyBundle{
@@ -218,13 +219,15 @@ func main() {
 			}()
 
 			// Attempt circuit relay reservation so remote NAT peers can reach us via this peer
-			go func() {
-				resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
-				defer cancelRes()
-				if res, err := p2pHost.ReserveRelay(resCtx, remotePeer); err == nil && res != nil {
-					slog.Info("Active circuit relay reservation confirmed", "relay_peer", remotePeer.String())
-				}
-			}()
+			if !cfg.DisableRelay {
+				go func() {
+					resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
+					defer cancelRes()
+					if res, err := p2pHost.ReserveRelay(resCtx, remotePeer); err == nil && res != nil {
+						slog.Info("Active circuit relay reservation confirmed", "relay_peer", remotePeer.String())
+					}
+				}()
+			}
 
 			// Automatically query PEX to discover other swarm members (e.g. routed through relay)
 			go func() {
@@ -273,13 +276,15 @@ func main() {
 			slog.Info("WAN bootstrap peer connected, triggering auto-sync of catalog manifests", "peer_id", peerID.String())
 
 			// Attempt circuit relay reservation on bootstrap peer
-			go func() {
-				resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
-				defer cancelRes()
-				if res, err := p2pHost.ReserveRelay(resCtx, peerID); err == nil && res != nil {
-					slog.Info("Active circuit relay reservation confirmed on bootstrap relay", "relay_peer", peerID.String())
-				}
-			}()
+			if !cfg.DisableRelay {
+				go func() {
+					resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
+					defer cancelRes()
+					if res, err := p2pHost.ReserveRelay(resCtx, peerID); err == nil && res != nil {
+						slog.Info("Active circuit relay reservation confirmed on bootstrap relay", "relay_peer", peerID.String())
+					}
+				}()
+			}
 
 			syncCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
