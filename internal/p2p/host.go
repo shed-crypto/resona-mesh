@@ -95,10 +95,10 @@ func NewHost(cfg HostConfig) (*Host, error) {
 	}
 
 	if cfg.EnableRelayService {
-		if _, err := circuitrelay.New(rawHost); err != nil {
+		if _, err := circuitrelay.New(rawHost, circuitrelay.WithInfiniteLimits()); err != nil {
 			slog.Warn("Failed to initialize circuit relay v2 service", "error", err)
 		} else {
-			slog.Info("Circuit relay v2 service active on host")
+			slog.Info("Circuit relay v2 service active on host with infinite limits")
 		}
 	}
 
