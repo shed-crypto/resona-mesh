@@ -20,6 +20,7 @@ import (
 	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 	circuitclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	circuitrelay "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -83,10 +84,15 @@ func NewHost(cfg HostConfig) (*Host, error) {
 	if cfg.DisableRelay {
 		opts = append(opts, libp2p.DisableRelay())
 	} else {
-		opts = append(opts, libp2p.EnableHolePunching())
+		opts = append(opts, libp2p.EnableHolePunching(
+			holepunch.WithTracer(&holePunchLogger{}),
+		))
 	}
 	if cfg.EnableNATPortMap {
 		opts = append(opts, libp2p.NATPortMap())
+	}
+	if cfg.EnableRelayService {
+		opts = append(opts, libp2p.EnableNATService(), libp2p.ForceReachabilityPublic())
 	}
 
 	rawHost, err := libp2p.New(opts...)
@@ -159,5 +165,49 @@ func (h *Host) ReserveRelay(ctx context.Context, relayID peer.ID) (*circuitclien
 // Close gracefully closes the host, terminating active connections and streams.
 func (h *Host) Close() error {
 	return h.raw.Close()
+}
+
+type holePunchLogger struct{}
+
+func (l *holePunchLogger) Trace(e *holepunch.Event) {
+	switch v := e.Evt.(type) {
+	case *holepunch.StartHolePunchEvt:
+		slog.Info("NAT DCUtR hole punching initiated",
+			"remote_peer", e.Remote.String(),
+			"remote_addrs", v.RemoteAddrs,
+			"rtt_ms", v.RTT.Milliseconds(),
+		)
+	case *holepunch.DirectDialEvt:
+		if v.Success {
+			slog.Info("NAT DCUtR direct dial succeeded",
+				"remote_peer", e.Remote.String(),
+				"elapsed_ms", v.EllapsedTime.Milliseconds(),
+			)
+		} else {
+			slog.Debug("NAT DCUtR direct dial attempt failed",
+				"remote_peer", e.Remote.String(),
+				"elapsed_ms", v.EllapsedTime.Milliseconds(),
+				"error", v.Error,
+			)
+		}
+	case *holepunch.EndHolePunchEvt:
+		if v.Success {
+			slog.Info("NAT DCUtR hole punching successfully upgraded connection to DIRECT P2P",
+				"remote_peer", e.Remote.String(),
+				"elapsed_ms", v.EllapsedTime.Milliseconds(),
+			)
+		} else {
+			slog.Warn("NAT DCUtR hole punching failed, remaining on circuit relay fallback",
+				"remote_peer", e.Remote.String(),
+				"elapsed_ms", v.EllapsedTime.Milliseconds(),
+				"error", v.Error,
+			)
+		}
+	case *holepunch.ProtocolErrorEvt:
+		slog.Debug("NAT DCUtR protocol error",
+			"remote_peer", e.Remote.String(),
+			"type", e.Type,
+		)
+	}
 }
 
