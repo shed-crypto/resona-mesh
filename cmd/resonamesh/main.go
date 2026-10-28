@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
@@ -152,8 +153,8 @@ func main() {
 	// 6. Initialize P2P Host and Swarm engine
 	hostConfig := p2p.HostConfig{
 		PrivateKey:         privKey,
-		DisableRelay:       false,
-		EnableRelayService: cfg.Headless,
+		DisableRelay:       cfg.DisableRelay,
+		EnableRelayService: cfg.Headless && !cfg.DisableRelay,
 		EnableNATPortMap:   cfg.NATPortMapEnabled,
 	}
 
@@ -165,14 +166,21 @@ func main() {
 		if err == nil {
 			hostConfig.ListenAddrs = []string{
 				fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
+				fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.P2PPort),
 				fmt.Sprintf("/ip4/%s/tcp/%s/ws", h, portStr),
 			}
 			hostConfig.HTTPHandler = apiServer.Handler()
 		} else {
-			hostConfig.ListenAddr = fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
+			hostConfig.ListenAddrs = []string{
+				fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
+				fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.P2PPort),
+			}
 		}
 	} else {
-		hostConfig.ListenAddr = fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort)
+		hostConfig.ListenAddrs = []string{
+			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
+			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.P2PPort),
+		}
 	}
 
 	p2pHost, err := p2p.NewHost(hostConfig)
@@ -197,6 +205,44 @@ func main() {
 
 	// Register P2P Peer Exchange (PEX) wire protocol for swarm relay discovery
 	pexHandler := p2p.NewPeerExchange(p2pHost, peerTracker)
+	pexHandler.SetDisableRelay(cfg.DisableRelay)
+
+	// Subscribe to event bus for reachability and UPnP address updates
+	if sub, err := p2pHost.Raw().EventBus().Subscribe([]any{
+		new(event.EvtLocalAddressesUpdated),
+		new(event.EvtLocalReachabilityChanged),
+	}); err == nil {
+		go func() {
+			defer sub.Close()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case e, ok := <-sub.Out():
+					if !ok {
+						return
+					}
+					switch evt := e.(type) {
+					case event.EvtLocalAddressesUpdated:
+						var addrs []string
+						for _, a := range evt.Current {
+							addrs = append(addrs, a.Address.String())
+						}
+						slog.Info("P2P local addresses updated (UPnP/Observed)", "addrs", addrs)
+					case event.EvtLocalReachabilityChanged:
+						reach := "Unknown"
+						switch evt.Reachability {
+						case network.ReachabilityPublic:
+							reach = "Public (Directly Reachable)"
+						case network.ReachabilityPrivate:
+							reach = "Private (Behind NAT)"
+						}
+						slog.Info("P2P network reachability updated", "reachability", reach)
+					}
+				}
+			}
+		}()
+	}
 
 	// Register universal swarm network connection listener
 	p2pHost.Network().Notify(&network.NotifyBundle{
@@ -216,6 +262,17 @@ func main() {
 					slog.Info("Successfully synced manifests from connected peer", "peer_id", remotePeer.String(), "imported_tracks", count)
 				}
 			}()
+
+			// Attempt circuit relay reservation so remote NAT peers can reach us via this peer
+			if !cfg.DisableRelay {
+				go func() {
+					resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
+					defer cancelRes()
+					if res, err := p2pHost.ReserveRelay(resCtx, remotePeer); err == nil && res != nil {
+						slog.Info("Active circuit relay reservation confirmed", "relay_peer", remotePeer.String())
+					}
+				}()
+			}
 
 			// Automatically query PEX to discover other swarm members (e.g. routed through relay)
 			go func() {
@@ -262,6 +319,18 @@ func main() {
 		slog.Info("Starting dynamic bootstrap resolver", "seeds_count", len(cfg.BootstrapSeeds))
 		p2p.StartBootstrapLoop(ctx, p2pHost, peerTracker, cfg.BootstrapSeeds, 2*time.Minute, func(peerID peer.ID) {
 			slog.Info("WAN bootstrap peer connected, triggering auto-sync of catalog manifests", "peer_id", peerID.String())
+
+			// Attempt circuit relay reservation on bootstrap peer
+			if !cfg.DisableRelay {
+				go func() {
+					resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
+					defer cancelRes()
+					if res, err := p2pHost.ReserveRelay(resCtx, peerID); err == nil && res != nil {
+						slog.Info("Active circuit relay reservation confirmed on bootstrap relay", "relay_peer", peerID.String())
+					}
+				}()
+			}
+
 			syncCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			if count, err := syncer.SyncFromPeer(syncCtx, peerID); err != nil {
@@ -278,6 +347,26 @@ func main() {
 			}
 		})
 	}
+
+	// 9c. Periodic PEX discovery loop for continuous dynamic swarm convergence
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				for _, p := range p2pHost.ConnectedPeers() {
+					pexCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+					if discovered, err := pexHandler.QueryPeers(pexCtx, p); err == nil && len(discovered) > 0 {
+						slog.Info("Discovered and connected to swarm peers via periodic PEX", "count", len(discovered), "via", p.String())
+					}
+					cancel()
+				}
+			}
+		}
+	}()
 
 	// 10. Wire swarm fetcher into audio streamer
 	fetcher := p2p.NewFetcher(p2pHost, bs, cat)

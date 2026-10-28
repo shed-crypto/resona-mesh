@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"resonamesh/internal/storage"
@@ -80,8 +81,10 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 	// 2. Discover available swarm peers
 	peers := f.host.ConnectedPeers()
 	if len(peers) == 0 {
+		slog.Warn("No connected swarm peers available to fetch block", "hash", blockHash)
 		return nil, ErrNoSwarmPeersAvailable
 	}
+	slog.Info("Querying swarm peers for block", "hash", blockHash, "index", blockIndex, "peers_count", len(peers))
 
 	req := WireBlockRequest{
 		ContentID:  contentID,
@@ -97,12 +100,12 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 		default:
 		}
 
-		peerCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		peerCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		data, err := RequestBlock(peerCtx, f.host, peerID, req)
 		cancel()
 
 		if err != nil {
-			slog.Debug("Swarm peer failed to supply block",
+			slog.Warn("Swarm peer failed to supply block",
 				"peer_id", peerID.String(),
 				"hash", blockHash,
 				"err", err,
@@ -156,13 +159,23 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 			f.quotaManager.Commit(resToken, int64(len(data)))
 		}
 
+		connType := "direct"
+		for _, c := range f.host.Network().ConnsToPeer(peerID) {
+			if c.Stat().Limited || strings.Contains(c.RemoteMultiaddr().String(), "p2p-circuit") {
+				connType = "relayed"
+				break
+			}
+		}
+
 		slog.Info("Successfully fetched block from swarm peer",
 			"peer_id", peerID.String(),
 			"hash", blockHash,
 			"bytes", len(data),
+			"connection", connType,
 		)
 		return data, nil
 	}
 
+	slog.Warn("Failed to fetch block from any connected peer", "hash", blockHash, "peers_tried", len(peers))
 	return nil, ErrBlockFetchFailed
 }
