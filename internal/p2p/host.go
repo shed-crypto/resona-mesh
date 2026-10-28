@@ -6,13 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"github.com/libp2p/go-libp2p"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/transport"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	libp2ptcp "github.com/libp2p/go-libp2p/p2p/transport/tcp"
+	libp2pws "github.com/libp2p/go-libp2p/p2p/transport/websocket"
+	circuitrelay "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/multiformats/go-multiaddr"
 )
 
@@ -23,9 +28,13 @@ var (
 
 // HostConfig holds networking configuration for the libp2p host.
 type HostConfig struct {
-	ListenAddr   string
-	PrivateKey   ed25519.PrivateKey
-	DisableRelay bool
+	ListenAddr         string
+	ListenAddrs        []string
+	PrivateKey         ed25519.PrivateKey
+	DisableRelay       bool
+	EnableRelayService bool
+	EnableNATPortMap   bool
+	HTTPHandler        http.Handler
 }
 
 // Host wraps the libp2p Host instance providing lifecycle and identity operations.
@@ -38,7 +47,13 @@ func NewHost(cfg HostConfig) (*Host, error) {
 	if len(cfg.PrivateKey) == 0 {
 		return nil, ErrNilPrivateKey
 	}
-	if cfg.ListenAddr == "" {
+
+	var listenAddrs []string
+	if len(cfg.ListenAddrs) > 0 {
+		listenAddrs = cfg.ListenAddrs
+	} else if cfg.ListenAddr != "" {
+		listenAddrs = []string{cfg.ListenAddr}
+	} else {
 		return nil, ErrEmptyListenAddr
 	}
 
@@ -49,18 +64,37 @@ func NewHost(cfg HostConfig) (*Host, error) {
 
 	opts := []libp2p.Option{
 		libp2p.Identity(p2pPrivKey),
-		libp2p.ListenAddrStrings(cfg.ListenAddr),
+		libp2p.ListenAddrStrings(listenAddrs...),
 		libp2p.Transport(libp2ptcp.NewTCPTransport),
 		libp2p.Security(noise.ID, noise.New),
+	}
+
+	if cfg.HTTPHandler != nil {
+		opts = append(opts, libp2p.Transport(func(u transport.Upgrader, rcmgr network.ResourceManager) (transport.Transport, error) {
+			return libp2pws.New(u, rcmgr, nil, libp2pws.WithHTTPHandler(cfg.HTTPHandler))
+		}))
+	} else {
+		opts = append(opts, libp2p.Transport(libp2pws.New))
 	}
 
 	if cfg.DisableRelay {
 		opts = append(opts, libp2p.DisableRelay())
 	}
+	if cfg.EnableNATPortMap {
+		opts = append(opts, libp2p.NATPortMap())
+	}
 
 	rawHost, err := libp2p.New(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("p2p: failed to construct libp2p host: %w", err)
+	}
+
+	if cfg.EnableRelayService {
+		if _, err := circuitrelay.New(rawHost); err != nil {
+			slog.Warn("Failed to initialize circuit relay v2 service", "error", err)
+		} else {
+			slog.Info("Circuit relay v2 service active on host")
+		}
 	}
 
 	slog.Info("Initialized libp2p host",
@@ -92,6 +126,11 @@ func (h *Host) AddrInfo() peer.AddrInfo {
 // Raw returns the underlying libp2p host.Host.
 func (h *Host) Raw() host.Host {
 	return h.raw
+}
+
+// Network returns the underlying libp2p network.Network.
+func (h *Host) Network() network.Network {
+	return h.raw.Network()
 }
 
 // Connect dials and establishes an authenticated connection to a remote peer.

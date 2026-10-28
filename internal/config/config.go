@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -27,6 +28,10 @@ type Config struct {
 	KeeperEnabled          bool
 	TrustedModeratorPubKey string
 	LogLevel               string
+	NATPortMapEnabled      bool
+	BootstrapSeeds         []string
+	AllowInsecureHTTP      bool
+	Headless               bool
 }
 
 // DefaultConfig returns safe, preconfigured embedded fallback settings.
@@ -39,6 +44,9 @@ func DefaultConfig() *Config {
 		KeeperEnabled:          false,
 		TrustedModeratorPubKey: "",
 		LogLevel:               "INFO",
+		NATPortMapEnabled:      true,
+		AllowInsecureHTTP:      false,
+		Headless:               false,
 	}
 }
 
@@ -49,12 +57,20 @@ func DefaultConfig() *Config {
 func Load(envPath string, args []string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	// 1. Load from .env file if it exists
+	// 1. Load from local bootstrap configuration file if present
+	if data, err := os.ReadFile("bootstrap.local.json"); err == nil {
+		var fileSeeds []string
+		if err := json.Unmarshal(data, &fileSeeds); err == nil {
+			cfg.BootstrapSeeds = fileSeeds
+		}
+	}
+
+	// 2. Load from .env file if it exists
 	if envPath != "" {
 		_ = loadDotEnv(envPath)
 	}
 
-	// 2. Read from process environment
+	// 3. Read from process environment
 	if val := os.Getenv("RESONAMESH_HTTP_ADDR"); val != "" {
 		cfg.HTTPAddr = val
 	}
@@ -80,8 +96,22 @@ func Load(envPath string, args []string) (*Config, error) {
 	if val := os.Getenv("RESONAMESH_LOG_LEVEL"); val != "" {
 		cfg.LogLevel = strings.ToUpper(val)
 	}
+	if val := os.Getenv("RESONAMESH_NAT_PORT_MAP"); val != "" {
+		cfg.NATPortMapEnabled = strings.EqualFold(val, "true") || val == "1"
+	}
+	if val := os.Getenv("RESONAMESH_BOOTSTRAP_SEEDS"); val != "" {
+		cfg.BootstrapSeeds = parseSeedsString(val)
+	} else if val := os.Getenv("RESONAMESH_BOOTSTRAP_PEERS"); val != "" {
+		cfg.BootstrapSeeds = parseSeedsString(val)
+	}
+	if val := os.Getenv("RESONAMESH_ALLOW_INSECURE_HTTP"); val != "" {
+		cfg.AllowInsecureHTTP = strings.EqualFold(val, "true") || val == "1"
+	}
+	if val := os.Getenv("RESONAMESH_HEADLESS"); val != "" {
+		cfg.Headless = strings.EqualFold(val, "true") || val == "1"
+	}
 
-	// 3. Override with CLI Flags if provided
+	// 4. Override with CLI Flags if provided
 	if len(args) > 0 {
 		fs := flag.NewFlagSet("resonamesh", flag.ContinueOnError)
 		flagHTTP := fs.String("http", "", "Local HTTP listen address (loopback)")
@@ -89,6 +119,10 @@ func Load(envPath string, args []string) (*Config, error) {
 		flagData := fs.String("data", "", "Data directory path")
 		flagQuota := fs.Int64("quota", 0, "Storage quota in bytes")
 		flagKeeper := fs.Bool("keeper", false, "Enable automatic background replication")
+		flagNATPortMap := fs.Bool("nat-port-map", cfg.NATPortMapEnabled, "Enable automatic router port mapping via UPnP / NAT-PMP")
+		flagBootstrap := fs.String("bootstrap", "", "Comma-separated bootstrap multiaddrs or HTTP(S) endpoint URLs")
+		flagInsecureHTTP := fs.Bool("allow-insecure-http", cfg.AllowInsecureHTTP, "Allow HTTP server to bind to non-loopback addresses (container/server environments)")
+		flagHeadless := fs.Bool("headless", cfg.Headless, "Run in headless relay mode with interactive player mutations disabled")
 
 		if err := fs.Parse(args); err != nil {
 			return nil, err
@@ -109,9 +143,22 @@ func Load(envPath string, args []string) (*Config, error) {
 		if *flagKeeper {
 			cfg.KeeperEnabled = true
 		}
+		if *flagBootstrap != "" {
+			cfg.BootstrapSeeds = parseSeedsString(*flagBootstrap)
+		}
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "nat-port-map":
+				cfg.NATPortMapEnabled = *flagNATPortMap
+			case "allow-insecure-http":
+				cfg.AllowInsecureHTTP = *flagInsecureHTTP
+			case "headless":
+				cfg.Headless = *flagHeadless
+			}
+		})
 	}
 
-	// 4. Validate configuration bounds
+	// 5. Validate configuration bounds
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -126,9 +173,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: invalid HTTP address: %w", err)
 	}
 
-	// Enforce loopback binding: 04-security-moderation.md §3 forbids 0.0.0.0
+	// Enforce loopback binding: 04-security-moderation.md §3 forbids 0.0.0.0 for desktop UI,
+	// but permits explicit opt-in for containerized / headless server deployments.
 	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
-		return ErrInsecureHTTPBind
+		if !c.AllowInsecureHTTP {
+			return ErrInsecureHTTPBind
+		}
 	}
 
 	if c.P2PPort < 1 || c.P2PPort > 65535 {
@@ -168,3 +218,35 @@ func loadDotEnv(filepath string) error {
 	}
 	return scanner.Err()
 }
+
+// parseSeedsString parses a string representing bootstrap seeds, supporting both JSON arrays and comma-separated lists.
+func parseSeedsString(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+		var arr []string
+		if err := json.Unmarshal([]byte(raw), &arr); err == nil {
+			var cleaned []string
+			for _, item := range arr {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					cleaned = append(cleaned, item)
+				}
+			}
+			return cleaned
+		}
+	}
+
+	parts := strings.Split(raw, ",")
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+

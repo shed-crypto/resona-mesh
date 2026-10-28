@@ -860,6 +860,99 @@ func TestAPIModerationEndpoints(t *testing.T) {
 	}
 }
 
+func TestHeadlessRelayMode(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := storage.Open(filepath.Join(tempDir, "headless.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	bs, err := storage.NewBlockStore(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cat := catalog.New(db, bs)
+	imp := importer.NewImporter(bs, db)
+	str := player.NewStreamer(cat, bs)
+	_, priv, _ := crypto.GenerateKeyPair()
+
+	cfg := &config.Config{
+		HTTPAddr:          "127.0.0.1:0",
+		P2PPort:           4001,
+		DataDir:           tempDir,
+		StorageQuotaBytes: 10 * 1024 * 1024,
+		Headless:          true,
+	}
+
+	server := api.NewServer(cfg, cat, imp, str, priv)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	// 1. Verify GET / serves headless relay status page
+	respRoot, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respRoot.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(respRoot.Body)
+	bodyStr := string(bodyBytes)
+	if respRoot.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for root page, got %d", respRoot.StatusCode)
+	}
+	if !strings.Contains(bodyStr, "SWARM RELAY ONLINE") {
+		t.Errorf("expected headless status badge in HTML, got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "Headless Relay Mode Active") {
+		t.Errorf("expected security note in HTML")
+	}
+
+	// 2. Verify POST /api/v1/tracks/import is blocked with 403 Forbidden
+	respImport, err := http.Post(ts.URL+"/api/v1/tracks/import", "multipart/form-data", bytes.NewReader([]byte("dummy")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respImport.Body.Close()
+	if respImport.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for track import in headless mode, got %d", respImport.StatusCode)
+	}
+
+	// 3. Verify DELETE /api/v1/tracks/test-id is blocked with 403 Forbidden
+	reqDelete, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/tracks/test-id", nil)
+	respDelete, err := http.DefaultClient.Do(reqDelete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respDelete.Body.Close()
+	if respDelete.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for track deletion in headless mode, got %d", respDelete.StatusCode)
+	}
+
+	// 4. Verify PUT /api/v1/settings is blocked with 403 Forbidden
+	reqSettings, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings", strings.NewReader(`{"keeper_enabled":true}`))
+	respSettings, err := http.DefaultClient.Do(reqSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respSettings.Body.Close()
+	if respSettings.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for settings update in headless mode, got %d", respSettings.StatusCode)
+	}
+
+	// 5. Verify GET /api/v1/node/status remains accessible
+	respStatus, err := http.Get(ts.URL + "/api/v1/node/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respStatus.Body.Close()
+	if respStatus.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for node status, got %d", respStatus.StatusCode)
+	}
+}
+
+
 
 
 

@@ -24,6 +24,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.StorageQuotaBytes != 5*1024*1024*1024 {
 		t.Errorf("expected default quota 5 GiB, got %d", cfg.StorageQuotaBytes)
 	}
+	if !cfg.NATPortMapEnabled {
+		t.Errorf("expected default NATPortMapEnabled to be true, got %v", cfg.NATPortMapEnabled)
+	}
 }
 
 func TestSecurityRejectionNonLoopback(t *testing.T) {
@@ -31,6 +34,18 @@ func TestSecurityRejectionNonLoopback(t *testing.T) {
 	_, err := config.Load("", insecureArgs)
 	if err != config.ErrInsecureHTTPBind {
 		t.Fatalf("expected ErrInsecureHTTPBind when binding to 0.0.0.0, got: %v", err)
+	}
+}
+
+func TestOptInNonLoopbackForContainers(t *testing.T) {
+	// CLI flag opt-in
+	args := []string{"--http", "0.0.0.0:8080", "--allow-insecure-http"}
+	cfg, err := config.Load("", args)
+	if err != nil {
+		t.Fatalf("expected successful bind with explicit --allow-insecure-http, got: %v", err)
+	}
+	if cfg.HTTPAddr != "0.0.0.0:8080" {
+		t.Errorf("expected 0.0.0.0:8080, got %s", cfg.HTTPAddr)
 	}
 }
 
@@ -64,7 +79,7 @@ func TestThreeTierPrecedence(t *testing.T) {
 	}
 
 	// 2. CLI flags override .env values
-	flags := []string{"--http", "127.0.0.1:9090", "--p2p", "6001"}
+	flags := []string{"--http", "127.0.0.1:9090", "--p2p", "6001", "--nat-port-map=false"}
 	cfgWithFlags, err := config.Load(envFile, flags)
 	if err != nil {
 		t.Fatalf("failed to load config with flags: %v", err)
@@ -75,4 +90,59 @@ func TestThreeTierPrecedence(t *testing.T) {
 	if cfgWithFlags.P2PPort != 6001 {
 		t.Errorf("expected CLI flag override 6001, got %d", cfgWithFlags.P2PPort)
 	}
+	if cfgWithFlags.NATPortMapEnabled {
+		t.Errorf("expected CLI flag override false for NATPortMapEnabled, got %v", cfgWithFlags.NATPortMapEnabled)
+	}
 }
+
+func TestBootstrapSeedsConfiguration(t *testing.T) {
+	// 1. Env variable with comma-separated list
+	t.Setenv("RESONAMESH_BOOTSTRAP_SEEDS", "https://gist.github.com/test/raw, /ip4/127.0.0.1/tcp/4001/p2p/12D3KooWtest")
+	cfgEnv, err := config.Load("", nil)
+	if err != nil {
+		t.Fatalf("failed to load config with env seeds: %v", err)
+	}
+	if len(cfgEnv.BootstrapSeeds) != 2 {
+		t.Fatalf("expected 2 bootstrap seeds from env, got %d", len(cfgEnv.BootstrapSeeds))
+	}
+	if cfgEnv.BootstrapSeeds[0] != "https://gist.github.com/test/raw" {
+		t.Errorf("unexpected seed 0: %s", cfgEnv.BootstrapSeeds[0])
+	}
+	if cfgEnv.BootstrapSeeds[1] != "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWtest" {
+		t.Errorf("unexpected seed 1: %s", cfgEnv.BootstrapSeeds[1])
+	}
+
+	// 2. CLI flag override
+	cliArgs := []string{"--bootstrap", `["https://override.gist.com/raw"]`}
+	cfgCLI, err := config.Load("", cliArgs)
+	if err != nil {
+		t.Fatalf("failed to load config with CLI seeds: %v", err)
+	}
+	if len(cfgCLI.BootstrapSeeds) != 1 || cfgCLI.BootstrapSeeds[0] != "https://override.gist.com/raw" {
+		t.Fatalf("expected CLI flag override, got: %+v", cfgCLI.BootstrapSeeds)
+	}
+}
+
+func TestHeadlessConfiguration(t *testing.T) {
+	// 1. Env variable
+	t.Setenv("RESONAMESH_HEADLESS", "true")
+	cfgEnv, err := config.Load("", nil)
+	if err != nil {
+		t.Fatalf("failed to load config with env: %v", err)
+	}
+	if !cfgEnv.Headless {
+		t.Errorf("expected Headless=true from env")
+	}
+
+	// 2. CLI flag
+	t.Setenv("RESONAMESH_HEADLESS", "false")
+	cfgCLI, err := config.Load("", []string{"--headless"})
+	if err != nil {
+		t.Fatalf("failed to load config with CLI flag: %v", err)
+	}
+	if !cfgCLI.Headless {
+		t.Errorf("expected Headless=true from CLI flag")
+	}
+}
+
+

@@ -44,6 +44,7 @@ data/keys/
 .env
 .env.local
 .env.*.local
+bootstrap.local.json
 
 
 # === Test/Experiment data ===
