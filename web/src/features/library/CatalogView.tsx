@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Disc3, RefreshCw, AlertCircle } from 'lucide-react';
+import { Plus, Disc3, RefreshCw, AlertCircle, ListMusic } from 'lucide-react';
 import type { Track } from '../../types/track';
 import { useCatalog } from '../../shared/hooks/useCatalog';
 import { TrackCard } from './TrackCard';
@@ -14,6 +14,10 @@ interface CatalogViewProps {
   onPlayTrack: (track: Track) => void;
   onTogglePlay?: () => void;
   onReportTrack?: (track: Track) => void;
+  onAddToPlaylist?: (track: Track) => void;
+  onOpenPlaylists?: () => void;
+  playlistsCount?: number;
+  onTracksLoaded?: (tracks: Track[]) => void;
 }
 
 export const CatalogView: React.FC<CatalogViewProps> = ({
@@ -22,6 +26,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   onPlayTrack,
   onTogglePlay,
   onReportTrack,
+  onAddToPlaylist,
+  onOpenPlaylists,
+  playlistsCount = 0,
+  onTracksLoaded,
 }) => {
   const {
     tracks,
@@ -38,6 +46,12 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   } = useCatalog();
 
   const [isImportOpen, setIsImportOpen] = useState(false);
+
+  React.useEffect(() => {
+    if (tracks.length > 0) {
+      onTracksLoaded?.(tracks);
+    }
+  }, [tracks, onTracksLoaded]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%' }}>
@@ -59,6 +73,16 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
         />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {onOpenPlaylists && (
+            <Button
+              variant="secondary"
+              size="md"
+              icon={<ListMusic size={15} style={{ color: 'var(--accent-emerald)' }} />}
+              onClick={onOpenPlaylists}
+            >
+              Playlists ({playlistsCount})
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="md"
@@ -195,6 +219,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               onTogglePin={() => togglePin(track.content_id, track.pinned)}
               onDelete={() => deleteTrack(track.content_id)}
               onReport={() => onReportTrack?.(track)}
+              onAddToPlaylist={() => onAddToPlaylist?.(track)}
             />
           ))}
         </div>
