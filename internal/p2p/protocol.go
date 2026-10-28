@@ -122,7 +122,7 @@ func (ph *ProtocolHandler) handleStream(s network.Stream) {
 
 	data, err := ph.provider.GetBlock(ctx, req.ContentID, req.BlockIndex, req.BlockHash)
 	if err != nil {
-		slog.Debug("Block not found locally", "hash", req.BlockHash, "err", err)
+		slog.Warn("Block requested by swarm peer not found locally", "peer_id", s.Conn().RemotePeer().String(), "hash", req.BlockHash)
 		_ = binary.Write(s, binary.BigEndian, StatusNotFound)
 		return
 	}
@@ -137,9 +137,10 @@ func (ph *ProtocolHandler) handleStream(s network.Stream) {
 	}
 
 	if _, err := s.Write(data); err != nil {
-		slog.Debug("Failed to write block payload to stream", "err", err)
+		slog.Warn("Failed to write block payload to stream", "peer_id", s.Conn().RemotePeer().String(), "err", err)
 		return
 	}
+	slog.Info("Served audio block to swarm peer", "peer_id", s.Conn().RemotePeer().String(), "hash", req.BlockHash, "bytes", len(data))
 }
 
 // RequestBlock fetches an individual block from a remote peer over libp2p.
