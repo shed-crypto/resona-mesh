@@ -19,6 +19,7 @@ const (
 	DomainReceipt  = "resonamesh:receipt:v1"
 	DomainModeratorCert = "resonamesh:mod-cert:v1"
 	DomainKeyRotation   = "resonamesh:key-rotation:v1"
+	DomainReleaseManifest = "resonamesh:release:v1"
 )
 
 var (

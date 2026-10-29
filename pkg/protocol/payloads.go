@@ -90,3 +90,28 @@ func CanonicalKeyRotationPayload(r *KeyRotationEvent) string {
 		r.IssuedAt,
 	)
 }
+
+
+// CanonicalReleasePayload produces a deterministic string representation of a release manifest for signing.
+func CanonicalReleasePayload(r *ReleaseManifest) string {
+	hashes := strings.Join(r.BlockHashes, ",")
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%d|%s|%s|%d|%s",
+		r.SchemaVersion,
+		r.Version,
+		r.TargetOS,
+		r.TargetArch,
+		strings.ToLower(r.BinaryHash),
+		r.TotalSizeBytes,
+		r.BlockSize,
+		hashes,
+		strings.ToLower(r.ReleasePubKey),
+		r.PublishedAt,
+		r.ReleaseNotes,
+	)
+}
+
+// ReleaseManifestID computes the SHA-256 identifier of a canonical release payload.
+func ReleaseManifestID(r *ReleaseManifest) string {
+	sum := sha256.Sum256([]byte(CanonicalReleasePayload(r)))
+	return hex.EncodeToString(sum[:])
+}

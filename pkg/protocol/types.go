@@ -98,3 +98,20 @@ type KeyRotationEvent struct {
 	IssuedAt       int64  `json:"issued_at"`
 	Signature      string `json:"signature"`
 }
+
+
+// ReleaseManifest describes an authentic, signed application update binary chunked across the swarm.
+type ReleaseManifest struct {
+	SchemaVersion  string   `json:"schema_version"` // "resonamesh:release:v1"
+	Version        string   `json:"version"`        // e.g. "0.2.0"
+	TargetOS       string   `json:"target_os"`     // "windows", "linux", "darwin"
+	TargetArch     string   `json:"target_arch"`   // "amd64", "arm64"
+	BinaryHash     string   `json:"binary_hash"`   // SHA-256 of monolithic executable
+	TotalSizeBytes int64    `json:"total_size_bytes"`
+	BlockSize      int      `json:"block_size"`    // 262144 (256 KiB)
+	BlockHashes    []string `json:"block_hashes"`  // Ordered block hashes
+	ReleasePubKey  string   `json:"release_pubkey"`
+	PublishedAt    int64    `json:"published_at"`
+	ReleaseNotes   string   `json:"release_notes,omitempty"`
+	Signature      string   `json:"signature"`
+}
