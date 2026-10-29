@@ -4,11 +4,16 @@ import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
 import { Badge } from '../../shared/components/Badge';
 import { ConnectPeerModal } from './ConnectPeerModal';
 import { SettingsModal } from './SettingsModal';
+import { UpdaterModal } from './UpdaterModal';
+import { useAutoUpdater } from '../../shared/hooks/useAutoUpdater';
+import { Sparkles, Loader2 } from 'lucide-react';
 
 export const NodeStatusPanel: React.FC = () => {
   const { status, loading, error, refresh } = useNodeStatus();
   const [isConnectOpen, setIsConnectOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isUpdaterOpen, setIsUpdaterOpen] = useState(false);
+  const { state: updaterState } = useAutoUpdater();
   const [copiedAddress, setCopiedAddress] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
 
@@ -108,6 +113,77 @@ export const NodeStatusPanel: React.FC = () => {
           />
           <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>ResonaMesh</span>
           <Badge variant="neutral">v{status.version}</Badge>
+          {/* Swarm P2P Auto-Updater Indicator */}
+          {updaterState.status === 'available' && (
+            <button
+              onClick={() => setIsUpdaterOpen(true)}
+              title={`New update v${updaterState.available_release?.version} available. Click to inspect & download over P2P.`}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '2px 8px',
+                borderRadius: 'var(--radius-full)',
+                backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                border: '1px solid rgba(56, 189, 248, 0.4)',
+                color: 'var(--accent-cyan)',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              <Sparkles size={11} />
+              <span>Update v{updaterState.available_release?.version}</span>
+            </button>
+          )}
+
+          {updaterState.status === 'downloading' && (
+            <button
+              onClick={() => setIsUpdaterOpen(true)}
+              title="Downloading release chunks from swarm peers"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '2px 8px',
+                borderRadius: 'var(--radius-full)',
+                backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                border: '1px solid var(--accent-cyan)',
+                color: 'var(--accent-cyan)',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              <Loader2 size={11} className="animate-spin" />
+              <span>{updaterState.progress_pct.toFixed(0)}%</span>
+            </button>
+          )}
+
+          {updaterState.status === 'ready_to_restart' && (
+            <button
+              onClick={() => setIsUpdaterOpen(true)}
+              title="Release binary verified and ready to apply. Click to restart."
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '2px 8px',
+                borderRadius: 'var(--radius-full)',
+                backgroundColor: 'rgba(16, 185, 129, 0.18)',
+                border: '1px solid var(--accent-emerald)',
+                color: 'var(--accent-emerald)',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                boxShadow: '0 0 10px rgba(16, 185, 129, 0.25)',
+              }}
+            >
+              <Check size={11} />
+              <span>Restart & Update</span>
+            </button>
+          )}
+
         </div>
 
         {/* Direct Swarm Peers (Seeds & Clients) */}
@@ -305,6 +381,7 @@ export const NodeStatusPanel: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
         onSettingsUpdated={() => refresh()}
       />
+      <UpdaterModal isOpen={isUpdaterOpen} onClose={() => setIsUpdaterOpen(false)} />
     </>
   );
 };
