@@ -250,6 +250,27 @@ func TestAPITrackLifecycleAndStreaming(t *testing.T) {
 		t.Fatal("streamed range bytes do not match expected chunk data")
 	}
 
+	// 8b. Download full track file via GET /api/v1/tracks/{id}/download
+	dlResp, err := client.Get(fmt.Sprintf("%s/api/v1/tracks/%s/download", ts.URL, contentID))
+	if err != nil {
+		t.Fatalf("failed GET download: %v", err)
+	}
+	defer dlResp.Body.Close()
+	if dlResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for download, got %d", dlResp.StatusCode)
+	}
+	contentDisp := dlResp.Header.Get("Content-Disposition")
+	if !strings.Contains(contentDisp, "attachment") || !strings.Contains(contentDisp, "Resona Folk Swarm - Ой у лузі червона калина.mp3") {
+		t.Fatalf("unexpected Content-Disposition header: %s", contentDisp)
+	}
+	downloadedBytes, err := io.ReadAll(dlResp.Body)
+	if err != nil {
+		t.Fatalf("failed to read download response body: %v", err)
+	}
+	if !bytes.Equal(downloadedBytes, audioData) {
+		t.Fatalf("downloaded track bytes (len %d) do not match original audio data (len %d)", len(downloadedBytes), len(audioData))
+	}
+
 	// 9. CORS preflight OPTIONS request
 	optReq, _ := http.NewRequest(http.MethodOptions, ts.URL+"/api/v1/tracks", nil)
 	optResp, err := client.Do(optReq)
@@ -1159,6 +1180,39 @@ func TestTrackCoverUploadAndServe(t *testing.T) {
 	defer missingResp.Body.Close()
 	if missingResp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404 Not Found, got %d", missingResp.StatusCode)
+	}
+}
+
+func TestAPITrackDownloadSanitizationAndNotFound(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+
+	// 1. Download non-existent track should return 404
+	missingResp, err := http.Get(ts.URL + "/api/v1/tracks/missing-id/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missingResp.Body.Close()
+	if missingResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing track download, got %d", missingResp.StatusCode)
+	}
+
+	// 2. Unit test filename sanitization edge cases
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"Normal Artist - Track.mp3", "Normal Artist - Track.mp3"},
+		{"AC/DC - Highway to Hell: Live?.mp3", "AC_DC - Highway to Hell_ Live_.mp3"},
+		{"Bad<chars>*here|\".mp3", "Bad_chars__here__.mp3"},
+		{"   ", "track.mp3"},
+		{".mp3", "track.mp3"},
+	}
+
+	for _, tc := range tests {
+		actual := api.SanitizeFilename(tc.input)
+		if actual != tc.expected {
+			t.Errorf("SanitizeFilename(%q) = %q; want %q", tc.input, actual, tc.expected)
+		}
 	}
 }
 

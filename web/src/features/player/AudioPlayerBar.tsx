@@ -10,6 +10,7 @@ import {
   Repeat,
   ListMusic,
   Trash2,
+  Download,
 } from 'lucide-react';
 import type { Track } from '../../types/track';
 import type { PlayerState } from '../../shared/hooks/useAudioPlayer';
@@ -461,6 +462,35 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             <ListMusic size={16} />
             <span>{queue.length}</span>
           </button>
+
+          {/* Download Audio Track */}
+          <a
+            href={apiClient.getDownloadUrl(currentTrack.content_id)}
+            download
+            style={{
+              background: 'none',
+              border: '1px solid var(--border-glass)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: '6px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              textDecoration: 'none',
+              transition: 'all 0.15s ease',
+            }}
+            title={`Download ${currentTrack.artist ? `${currentTrack.artist} - ` : ''}${currentTrack.title}.mp3`}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = 'var(--text-primary)';
+              e.currentTarget.style.borderColor = 'var(--border-active)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'var(--text-muted)';
+              e.currentTarget.style.borderColor = 'var(--border-glass)';
+            }}
+          >
+            <Download size={16} />
+          </a>
 
           <VolumeControl
             volume={volume}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Pause, Pin, Trash2, ShieldCheck, Flag, Ban, ListPlus } from 'lucide-react';
+import { Play, Pause, Pin, Trash2, ShieldCheck, Flag, Ban, ListPlus, Download } from 'lucide-react';
 import type { Track } from '../../types/track';
 import { Badge } from '../../shared/components/Badge';
 import { generateCoverDataUri } from '../../shared/utils/artwork';
@@ -245,6 +245,31 @@ export const TrackCard: React.FC<TrackCardProps> = ({
           >
             <Pin size={16} style={{ fill: track.pinned ? 'currentColor' : 'none' }} />
           </button>
+
+          {!track.blocked && (
+            <a
+              href={apiClient.getDownloadUrl(track.content_id)}
+              download
+              title={`Download ${track.artist ? `${track.artist} - ` : ''}${track.title}.mp3`}
+              style={{
+                padding: '8px',
+                borderRadius: 'var(--radius-md)',
+                color: 'var(--text-muted)',
+                backgroundColor: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                textDecoration: 'none',
+                transition: 'color 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+            >
+              <Download size={16} />
+            </a>
+          )}
 
           <button
             onClick={onDelete}
