@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -185,10 +186,15 @@ func main() {
 
 	// 6. Initialize P2P Host and Swarm engine (Dual-Stack IPv4 + IPv6 for direct mobile bypass)
 	hostConfig := p2p.HostConfig{
-		PrivateKey:         privKey,
-		DisableRelay:       cfg.DisableRelay,
-		EnableRelayService: cfg.Headless && !cfg.DisableRelay,
-		EnableNATPortMap:   cfg.NATPortMapEnabled,
+		PrivateKey:           privKey,
+		DisableRelay:         cfg.DisableRelay,
+		EnableRelayService:   (cfg.Headless || cfg.RelayMode == config.RelayModeTransit) && !cfg.DisableRelay,
+		RelayMode:            cfg.RelayMode,
+		RelayMaxReservations: cfg.RelayMaxReservations,
+		RelayMaxCircuits:     cfg.RelayMaxCircuits,
+		RelayDataLimitBytes:  cfg.RelayDataLimitBytes,
+		RelayDurationSec:     cfg.RelayDurationSec,
+		EnableNATPortMap:     cfg.NATPortMapEnabled,
 	}
 
 	baseListenAddrs := []string{
@@ -237,6 +243,7 @@ func main() {
 	// Register P2P Peer Exchange (PEX) wire protocol for swarm relay discovery
 	pexHandler := p2p.NewPeerExchange(p2pHost, peerTracker)
 	pexHandler.SetDisableRelay(cfg.DisableRelay)
+	pexHandler.SetRelayConfig(cfg.RelayMode, cfg.Headless, cfg.RelayMaxReservations, cfg.MinSwarmPeers, cfg.MaxSwarmPeers)
 
 	// Subscribe to event bus for reachability and UPnP address updates
 	if sub, err := p2pHost.Raw().EventBus().Subscribe([]any{
@@ -265,6 +272,11 @@ func main() {
 						switch evt.Reachability {
 						case network.ReachabilityPublic:
 							reach = "Public (Directly Reachable)"
+							if !cfg.DisableRelay && cfg.RelayMode != config.RelayModePEXOnly {
+								if err := p2pHost.EnableDynamicRelayService(hostConfig); err != nil {
+									slog.Warn("Failed to dynamically activate relay service on public reachability", "error", err)
+								}
+							}
 						case network.ReachabilityPrivate:
 							reach = "Private (Behind NAT)"
 						}
@@ -287,6 +299,9 @@ func main() {
 				"nat_type", string(diag.NATType),
 				"candidate_ports", diag.CandidatePorts,
 			)
+			if !cfg.DisableRelay && cfg.RelayMode != config.RelayModePEXOnly && diag.NATType == p2p.NATTypeEndpointIndependent {
+				_ = p2pHost.EnableDynamicRelayService(hostConfig)
+			}
 		} else {
 			slog.Debug("Initial STUN probe notice", "error", err)
 		}
@@ -313,17 +328,6 @@ func main() {
 				}
 			}()
 
-			// Attempt circuit relay reservation so remote NAT peers can reach us via this peer
-			if !cfg.DisableRelay {
-				go func() {
-					resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
-					defer cancelRes()
-					if res, err := p2pHost.ReserveRelay(resCtx, remotePeer); err == nil && res != nil {
-						slog.Info("Active circuit relay reservation confirmed", "relay_peer", remotePeer.String())
-					}
-				}()
-			}
-
 			// Automatically query PEX to discover other swarm members (e.g. routed through relay)
 			go func() {
 				pexCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -337,6 +341,7 @@ func main() {
 			remotePeer := c.RemotePeer()
 			if len(n.ConnsToPeer(remotePeer)) == 0 {
 				peerTracker.SetConnected(remotePeer, false)
+				pexHandler.OnPeerDisconnected(remotePeer)
 				slog.Info("Swarm peer disconnected", "peer_id", remotePeer.String())
 			}
 		},
@@ -364,22 +369,16 @@ func main() {
 	}
 	defer discovery.Close()
 
-	// 9b. Start WAN dynamic bootstrap resolver and periodic reconnect loop
+	// 9b. Start WAN dynamic bootstrap resolver with Dormant Bootstrap policy
+	var bootstrapPeerIDs []peer.ID
+	var bootstrapMu sync.Mutex
 	if len(cfg.BootstrapSeeds) > 0 {
-		slog.Info("Starting dynamic bootstrap resolver", "seeds_count", len(cfg.BootstrapSeeds))
-		p2p.StartBootstrapLoop(ctx, p2pHost, peerTracker, cfg.BootstrapSeeds, 2*time.Minute, func(peerID peer.ID) {
+		slog.Info("Starting dynamic bootstrap resolver", "seeds_count", len(cfg.BootstrapSeeds), "min_swarm_peers", cfg.MinSwarmPeers)
+		p2p.StartBootstrapLoop(ctx, p2pHost, peerTracker, cfg.BootstrapSeeds, 2*time.Minute, cfg.MinSwarmPeers, func(peerID peer.ID) {
 			slog.Info("WAN bootstrap peer connected, triggering auto-sync of catalog manifests", "peer_id", peerID.String())
-
-			// Attempt circuit relay reservation on bootstrap peer
-			if !cfg.DisableRelay {
-				go func() {
-					resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
-					defer cancelRes()
-					if res, err := p2pHost.ReserveRelay(resCtx, peerID); err == nil && res != nil {
-						slog.Info("Active circuit relay reservation confirmed on bootstrap relay", "relay_peer", peerID.String())
-					}
-				}()
-			}
+			bootstrapMu.Lock()
+			bootstrapPeerIDs = append(bootstrapPeerIDs, peerID)
+			bootstrapMu.Unlock()
 
 			syncCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
@@ -396,6 +395,11 @@ func main() {
 				slog.Info("Discovered additional peers from bootstrap relay via PEX", "count", len(discovered))
 			}
 		})
+	}
+
+	// 9c. Start Smart Relay Orchestrator (manages reservations prioritizing community relays over bootstrap seeds)
+	if !cfg.DisableRelay && !cfg.Headless {
+		pexHandler.StartRelayOrchestrator(ctx, bootstrapPeerIDs)
 	}
 
 	// 9c. Periodic PEX discovery loop for continuous dynamic swarm convergence
