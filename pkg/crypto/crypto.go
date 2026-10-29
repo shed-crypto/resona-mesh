@@ -17,6 +17,8 @@ const (
 	DomainDecision = "resonamesh:decision:v1"
 	DomainReport   = "resonamesh:report:v1"
 	DomainReceipt  = "resonamesh:receipt:v1"
+	DomainModeratorCert = "resonamesh:mod-cert:v1"
+	DomainKeyRotation   = "resonamesh:key-rotation:v1"
 )
 
 var (
