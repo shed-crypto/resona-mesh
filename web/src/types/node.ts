@@ -14,7 +14,13 @@ export interface NodeStatus {
   storage_used_bytes: number;
   total_tracks: number;
   connected_peers?: number;
+  direct_peers?: number;
+  relay_connected?: boolean;
+  bootstrap_seeds?: string[];
   uptime_seconds: number;
+  peer_id?: string;
+  listen_addrs?: string[];
+  is_moderator?: boolean;
 }
 
 export interface StorageUsage {

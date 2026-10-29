@@ -42,4 +42,5 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://127.0.0.1:8080/api/v1/status || exit 1
 
 ENTRYPOINT ["/app/resonamesh"]
-CMD ["--http", "0.0.0.0:8080", "--p2p", "4001", "--data", "/app/data"]
+CMD ["--http", "0.0.0.0:8080", "--p2p", "4001", "--data", "/app/data", "--allow-insecure-http"]
+

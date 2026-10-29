@@ -34,6 +34,8 @@ type ImportParams struct {
 	LicenseCode  string
 	PublisherKey ed25519.PrivateKey
 	AudioData    io.Reader
+	CoverData    []byte
+	CoverMime    string
 }
 
 // BlockChecker evaluates whether audio content is blocked by moderation policy.
@@ -227,6 +229,20 @@ func (imp *Importer) Import(ctx context.Context, params ImportParams) (*protocol
 		if err != nil {
 			cleanupBlocks()
 			return nil, fmt.Errorf("importer: failed to insert block record: %w", err)
+		}
+	}
+
+	if len(params.CoverData) > 0 {
+		mime := params.CoverMime
+		if mime == "" {
+			mime = "image/jpeg"
+		}
+		insertCoverSQL := `
+		INSERT INTO track_covers (content_id, mime_type, data, created_at)
+		VALUES (?, ?, ?, ?)`
+		if _, err := tx.ExecContext(ctx, insertCoverSQL, manifest.ContentID, mime, params.CoverData, now); err != nil {
+			cleanupBlocks()
+			return nil, fmt.Errorf("importer: failed to insert cover art: %w", err)
 		}
 	}
 

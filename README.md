@@ -2,7 +2,7 @@
 
 **Decentralized P2P Audio Streaming Application with Local Autonomy**
 
-ResonaMesh is a peer-to-peer audio streaming and distribution platform engineered to operate reliably in local networks and fragmented environments without requiring an active global internet connection or centralized streaming servers.
+ResonaMesh is a peer-to-peer audio streaming and distribution platform engineered to operate reliably in local networks and fragmented environments without requiring an active global internet connection or centralized streaming servers. When WAN connectivity is available, the mesh automatically extends across NAT boundaries using STUN-resolved endpoints, UDP hole punching (DCUtR), and circuit relay fallback.
 
 Developed as a Bachelor's Thesis in Software Engineering at the Faculty of Information Technology, Taras Shevchenko National University of Kyiv.
 
@@ -11,9 +11,15 @@ Developed as a Bachelor's Thesis in Software Engineering at the Faculty of Infor
 ## Key Capabilities
 
 - **Autonomous Local Mesh**: Operates across local area networks (LAN) using mDNS peer discovery and direct multiaddr dialing without cloud dependencies.
+- **WAN NAT Traversal**: Extends beyond LAN using RFC 5389 STUN resolution, UPnP/NAT-PMP port mapping, QUIC-v1 UDP transport, DCUtR coordinated hole punching, and Circuit Relay v2 fallback.
 - **Range-Based Audio Streaming**: Chunks audio into 256 KiB blocks, verified via cryptographic SHA-256 hashes and signed with Ed25519 creator keys. Supports instant scrubbing via HTTP Range requests.
-- **Embedded Local Catalog**: Stores track metadata and peer routing indexes in an embedded pure-Go SQLite database with instant full-text search (FTS5).
-- **Single-Binary Delivery**: Compiles the entire Go backend and React frontend into a standalone standalone executable (`resonamesh.exe`) using Go 1.16+ `//go:embed`.
+- **Embedded Local Catalog**: Stores track metadata and peer routing indexes in an embedded pure-Go SQLite database with instant full-text search (FTS5) supporting multilingual Unicode queries.
+- **Custom Cover Art**: Upload and serve per-track cover images with automatic MIME detection and browser caching, falling back to procedurally generated neon vinyl artwork derived from content SHA-256 hashes.
+- **Playlist Management**: Create, reorder, and manage playlists entirely offline. Export playlists as shareable P2P JSON manifests for 1-click import by other mesh peers.
+- **Playback Queue**: Full queue management with Next/Previous navigation, Shuffle mode, Repeat mode, and automatic track advancement.
+- **Privacy-Preserving Recommendations**: In-browser recommendation engine computes artist affinity, trust-weighted scoring, and discovery bias using only local listening telemetry. Zero data leaves the node.
+- **Cryptographic Content Moderation**: Ed25519-signed BLOCK and RESTORE decisions propagated across the mesh via a dedicated wire protocol with abuse report outboxes and receipt verification.
+- **Single-Binary Delivery**: Compiles the entire Go backend and React frontend into a standalone executable (`resonamesh.exe`) using Go 1.16+ `//go:embed`.
 - **Media Session Integration**: Synchronizes playback state with native OS media controls and lock-screen widgets via the Web Media Session API.
 
 ---
@@ -26,6 +32,7 @@ Developed as a Bachelor's Thesis in Software Engineering at the Faculty of Infor
                    |     - Dark DAW-grade Studio UI              |
                    |     - Dual-buffer timeline (P2P vs Play)    |
                    |     - Media Session API controller          |
+                   |     - Playlists, Cover Art, Recommendations |
                    +----------------------+----------------------+
                                           | HTTP / SSE (127.0.0.1:8080)
                                           v
@@ -36,24 +43,46 @@ Developed as a Bachelor's Thesis in Software Engineering at the Faculty of Infor
 |  |     internal/api      |  |    internal/audio     |  |   internal/storage    |  |
 |  |  - REST API Handlers  |  |  - 256 KiB Chunker    |  |  - SQLite + FTS5 DB   |  |
 |  |  - SSE Event Stream   |  |  - Range Streamer     |  |  - Disk Cache (LRU)   |  |
+|  |  - Cover Art Serving  |  |  - Block Verifier     |  |  - Quota Manager      |  |
 |  +-----------------------+  +-----------+-----------+  +-----------------------+  |
 |                                         |                                         |
-|                                         v                                         |
-|                            +-------------------------+                            |
-|                            |      internal/p2p       |                            |
-|                            |  - go-libp2p Host       |                            |
-|                            |  - Noise & Yamux Conn   |                            |
-|                            |  - mDNS Peer Discovery  |                            |
-|                            |  - Block Exchange Wire  |                            |
-|                            +------------+------------+                            |
+|  +-----------------------+              v              +-----------------------+  |
+|  | internal/moderation   |  +-------------------------+|   internal/importer   |  |
+|  | - Policy Engine       |  |      internal/p2p       ||  - MP3 Chunking       |  |
+|  | - Outbox / Receipts   |  |  - go-libp2p Host       ||  - Manifest Signing   |  |
+|  | - Decision Broadcast  |  |  - TCP + QUIC-v1 + WS   ||  - Cover Art Ingest   |  |
+|  +-----------------------+  |  - Noise Encryption      |+-----------------------+  |
+|                             |  - mDNS + PEX Discovery  |                          |
+|                             |  - STUN + DCUtR + Relay  |                          |
+|                             |  - Block Exchange Wire   |                          |
+|                             |  - Catalog Syncer        |                          |
+|                             |  - Keeper Replicator     |                          |
+|                             +------------+-------------+                          |
 +-----------------------------------------|-----------------------------------------+
                                           | libp2p (/resonamesh/*/1.0.0)
                                           v
                                 +-------------------+
                                 |     P2P Swarm     |
-                                |  Connected Peers  |
+                                |  LAN + WAN Peers  |
                                 +-------------------+
 ```
+
+---
+
+## NAT Traversal Strategy
+
+ResonaMesh implements a multi-tier connectivity waterfall to maximize direct peer-to-peer connections across network boundaries:
+
+| Priority | Mechanism | Protocol | Scope |
+| :--- | :--- | :--- | :--- |
+| 1 | **mDNS Discovery** | Multicast DNS | LAN only |
+| 2 | **Direct Dial** | TCP + QUIC-v1 | Public IP / port-forwarded peers |
+| 3 | **STUN Resolution** | RFC 5389 (Google, Cloudflare) | Discovers public reflexive IP:port |
+| 4 | **UPnP / NAT-PMP** | Router IGD protocol | Automatic port forwarding on home routers |
+| 5 | **DCUtR Hole Punching** | `/libp2p/dcutr` | RTT-synchronized simultaneous UDP dial through relay signaling |
+| 6 | **Circuit Relay v2** | `/libp2p/circuit/relay/0.2.0/hop` | Last resort: data flows through a public relay peer |
+
+The system prioritizes peers with public IPs or open NATs as relay candidates. Cloud relay instances (e.g. Render deployments) serve as a fallback when no community relays are available.
 
 ---
 
@@ -61,8 +90,8 @@ Developed as a Bachelor's Thesis in Software Engineering at the Faculty of Infor
 
 | Layer | Technology | Rationale |
 | :--- | :--- | :--- |
-| **Backend Runtime** | Go 1.22+ | High concurrency, low memory footprint, single-binary compilation. |
-| **P2P Networking** | `go-libp2p` | Modular transport, Noise encryption, Yamux multiplexing, mDNS discovery. |
+| **Backend Runtime** | Go 1.27+ | High concurrency, low memory footprint, single-binary compilation. |
+| **P2P Networking** | `go-libp2p` v0.50 | TCP, QUIC-v1, WebSocket transports; Noise encryption; DCUtR hole punching; Circuit Relay v2. |
 | **Storage & Search** | `modernc.org/sqlite` | Pure Go implementation (no CGO required; seamless Windows/Linux compilation). |
 | **Cryptography** | Standard Go `crypto/ed25519`, `crypto/sha256` | Content verification, author authenticity, tamper resistance. |
 | **Frontend** | React 19, TypeScript, Vite | Modern component architecture, fast build pipeline, strict typing. |
@@ -74,7 +103,7 @@ Developed as a Bachelor's Thesis in Software Engineering at the Faculty of Infor
 
 ### Prerequisites
 
-- **Go**: 1.22 or higher
+- **Go**: 1.27 or higher
 - **Node.js**: 20.x or higher (for frontend build)
 - **Git**
 
@@ -140,7 +169,14 @@ go test -v -count=1 ./tests/integration
 ```
 Covers: clean launch, manifest tampering detection, P2P discovery & streaming, multilingual FTS5 catalog search, HTTP Range compliance, cold-cache prefetching, publisher failover, quota & LRU eviction, Keeper replication, abuse report outbox queues, and moderation lifecycles.
 
-### 2. Empirical Research Experiments (E1 — E3)
+### 2. Code Coverage
+Run coverage analysis across all packages:
+```bash
+go test -cover ./...
+```
+Core domain packages maintain 63-100% statement coverage (average ~78%), with `pkg/protocol` at 100% and `internal/audio` at 97.7%.
+
+### 3. Empirical Research Experiments (E1 — E3)
 Executes scientific trials and outputs raw CSV metrics to `experiments/results/`:
 ```bash
 # Run benchmark experiments (E1, E2, E3)
@@ -149,9 +185,9 @@ go run ./cmd/benchmark
 # Generate statistical summary analysis
 go run ./experiments/analysis/analyze.go
 ```
-- **E1:** Full download (B0) vs Sequential demand (B1) vs Bounded prefetch (B2) (≥ 20 trials per mode).
-- **E2:** Source failure and Keeper replica failover latency (≥ 10 trials).
-- **E3:** Network partition healing and cryptographic moderation convergence (≥ 10 trials).
+- **E1:** Full download (B0) vs Sequential demand (B1) vs Bounded prefetch (B2) (20+ trials per mode).
+- **E2:** Source failure and Keeper replica failover latency (10+ trials).
+- **E3:** Network partition healing and cryptographic moderation convergence (10+ trials).
 
 Detailed findings are documented in [experiments/results/analysis_summary.md](experiments/results/analysis_summary.md) and [docs/THESIS_COMPLIANCE.md](docs/THESIS_COMPLIANCE.md).
 
@@ -172,6 +208,7 @@ Detailed findings are documented in [experiments/results/analysis_summary.md](ex
 │   └── results/             # Raw CSV datasets (E1, E2, E3) and summary
 ├── internal/
 │   ├── api/                 # Local HTTP server, REST endpoints, web embed
+│   ├── audio/               # Audio chunking, SHA-256 block hashing
 │   ├── catalog/             # SQLite + FTS5 catalog and availability tracking
 │   ├── config/              # CLI and environment variable configuration
 │   ├── importer/            # MP3 chunking, licensing, manifest generation
@@ -193,8 +230,16 @@ Detailed findings are documented in [experiments/results/analysis_summary.md](ex
 
 ---
 
+## Contributing
+
+1. Fork the repository and create a feature branch from `develop`.
+2. Ensure all tests pass: `go test ./...`
+3. Ensure the frontend builds cleanly: `cd web && npm run build`
+4. Follow [Conventional Commits](https://www.conventionalcommits.org/) for all commit messages.
+5. Open a pull request targeting `develop`.
+
+---
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0 — see the [LICENSE](LICENSE) file for details.
-
-

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UploadCloud, CheckCircle2, AlertCircle } from 'lucide-react';
+import { UploadCloud, CheckCircle2, AlertCircle, Image as ImageIcon, X } from 'lucide-react';
 import { Modal } from '../../shared/components/Modal';
 import { Button } from '../../shared/components/Button';
 import { apiClient } from '../../shared/api/client';
@@ -16,6 +16,8 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   onImportSuccess,
 }) => {
   const [file, setFile] = useState<File | null>(null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [artist, setArtist] = useState('');
   const [description, setDescription] = useState('');
@@ -27,6 +29,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 
   const resetForm = () => {
     setFile(null);
+    if (coverPreview) URL.revokeObjectURL(coverPreview);
+    setCoverFile(null);
+    setCoverPreview(null);
     setTitle('');
     setArtist('');
     setDescription('');
@@ -35,6 +40,25 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     setError(null);
     setSuccess(false);
     setLoading(false);
+  };
+
+  const handleCoverChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const selected = e.target.files[0];
+      if (selected.size > 5 * 1024 * 1024) {
+        setError('Cover art image must be under 5 MB');
+        return;
+      }
+      setCoverFile(selected);
+      const url = URL.createObjectURL(selected);
+      setCoverPreview(url);
+    }
+  };
+
+  const removeCover = () => {
+    if (coverPreview) URL.revokeObjectURL(coverPreview);
+    setCoverFile(null);
+    setCoverPreview(null);
   };
 
   const handleClose = () => {
@@ -74,6 +98,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 
     const formData = new FormData();
     formData.append('audio_file', file);
+    if (coverFile) {
+      formData.append('cover_file', coverFile);
+    }
     formData.append('title', title.trim());
     formData.append('artist', artist.trim());
     formData.append('description', description.trim());
@@ -134,7 +161,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
             </div>
           )}
 
-          {/* File Picker Area */}
+          {/* Audio File Picker Area */}
           <label
             style={{
               display: 'flex',
@@ -164,6 +191,97 @@ export const ImportModal: React.FC<ImportModalProps> = ({
               style={{ display: 'none' }}
             />
           </label>
+
+          {/* Optional Cover Art Picker */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '14px',
+              padding: '12px 14px',
+              backgroundColor: 'rgba(255, 255, 255, 0.02)',
+              border: '1px solid var(--border-glass)',
+              borderRadius: 'var(--radius-lg)',
+            }}
+          >
+            <div
+              style={{
+                width: '60px',
+                height: '60px',
+                borderRadius: 'var(--radius-md)',
+                overflow: 'hidden',
+                backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                border: '1px dashed var(--border-glass)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              {coverPreview ? (
+                <img src={coverPreview} alt="Cover preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                <ImageIcon size={22} style={{ color: 'var(--text-muted)' }} />
+              )}
+            </div>
+
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '3px' }}>
+              <div style={{ fontSize: '0.84rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {coverFile ? coverFile.name : 'Cover Artwork (Optional)'}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                {coverFile ? `${(coverFile.size / 1024).toFixed(0)} KiB • Embedded into Swarm` : 'PNG, JPG, or WebP up to 5 MB'}
+              </div>
+            </div>
+
+            <div>
+              {coverFile ? (
+                <button
+                  type="button"
+                  onClick={removeCover}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '6px 10px',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: 'rgba(244, 63, 94, 0.1)',
+                    border: '1px solid rgba(244, 63, 94, 0.3)',
+                    color: 'var(--accent-rose)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <X size={13} /> Remove
+                </button>
+              ) : (
+                <label
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '7px 12px',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--border-glass)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.78rem',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <ImageIcon size={14} style={{ color: 'var(--accent-cyan)' }} /> Select Image
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={handleCoverChange}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+              )}
+            </div>
+          </div>
 
           {/* Title & Artist */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>

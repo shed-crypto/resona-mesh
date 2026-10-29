@@ -184,8 +184,31 @@ export const apiClient = {
     return res.json();
   },
 
+  async createDecision(params: {
+    content_id: string;
+    payload_hash?: string;
+    action: 'BLOCK' | 'RESTORE';
+    reason_code: string;
+    reason_text?: string;
+  }): Promise<{ status: string; decision: Decision }> {
+    const res = await fetch(`${API_BASE}/moderation/decisions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to execute moderation decision');
+    }
+    return res.json();
+  },
+
   getStreamUrl(id: string): string {
     return `${API_BASE}/stream/${id}`;
+  },
+
+  getCoverUrl(id: string): string {
+    return `${API_BASE}/tracks/${id}/cover`;
   },
 };
 

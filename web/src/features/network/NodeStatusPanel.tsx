@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { HardDrive, Key, Activity, Clock, Radio, Settings, UserPlus } from 'lucide-react';
+import { HardDrive, Key, Activity, Clock, Radio, Settings, UserPlus, Share2, Check, Globe } from 'lucide-react';
 import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
 import { Badge } from '../../shared/components/Badge';
 import { ConnectPeerModal } from './ConnectPeerModal';
@@ -9,6 +9,25 @@ export const NodeStatusPanel: React.FC = () => {
   const { status, loading, error, refresh } = useNodeStatus();
   const [isConnectOpen, setIsConnectOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [copiedAddress, setCopiedAddress] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
+
+  const dialableAddrs = (status?.listen_addrs || []).filter(Boolean);
+  const primaryAddr = dialableAddrs.find((a) => !a.includes('/127.0.0.1/') && !a.includes('/169.254.')) || dialableAddrs[0];
+
+  const handleCopyMyAddress = () => {
+    if (!primaryAddr) return;
+    navigator.clipboard.writeText(primaryAddr);
+    setCopiedAddress(true);
+    setTimeout(() => setCopiedAddress(false), 2500);
+  };
+
+  const handleCopyMyKey = () => {
+    if (!status?.publisher_key) return;
+    navigator.clipboard.writeText(status.publisher_key);
+    setCopiedKey(true);
+    setTimeout(() => setCopiedKey(false), 2500);
+  };
 
   const formatBytes = (bytes: number) => {
     if (bytes < 1024 * 1024) {
@@ -91,11 +110,11 @@ export const NodeStatusPanel: React.FC = () => {
           <Badge variant="neutral">v{status.version}</Badge>
         </div>
 
-        {/* P2P Swarm Peers Button */}
+        {/* Direct Swarm Peers (Seeds & Clients) */}
         <button
           type="button"
           onClick={() => setIsConnectOpen(true)}
-          title="Click to manually dial/connect a swarm peer"
+          title="Swarm Peers (Direct Audio Streamers & Seeds). Click to dial/connect manually."
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -114,20 +133,102 @@ export const NodeStatusPanel: React.FC = () => {
           <Radio
             size={14}
             style={{
-              color: (status.connected_peers ?? 0) > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              color: (status.direct_peers ?? status.connected_peers ?? 0) > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
             }}
           />
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
-            {status.connected_peers ?? 0} {(status.connected_peers ?? 0) === 1 ? 'peer' : 'peers'}
+            {status.direct_peers ?? status.connected_peers ?? 0} {(status.direct_peers ?? status.connected_peers ?? 0) === 1 ? 'peer' : 'peers'}
           </span>
           <UserPlus size={12} style={{ color: 'var(--text-muted)', marginLeft: '2px' }} />
         </button>
 
-        {/* Node Identity Key */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }} title={`Full Key: ${status.publisher_key}`}>
-          <Key size={14} style={{ color: 'var(--text-muted)' }} />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>{shortKey}</span>
+        {/* Cloud Relay / Directing Server Status Badge */}
+        <div
+          title={status.relay_connected ? 'Cloud Swarm Relay: Connected & Routing' : 'Cloud Swarm Relay: Searching for beacon...'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            padding: '2px 7px',
+            borderRadius: 'var(--radius-sm)',
+            backgroundColor: status.relay_connected ? 'rgba(0, 255, 204, 0.08)' : 'rgba(255, 255, 255, 0.03)',
+            border: status.relay_connected ? '1px solid rgba(0, 255, 204, 0.25)' : '1px solid var(--border-glass)',
+            fontSize: '0.72rem',
+            color: status.relay_connected ? 'var(--accent-sky)' : 'var(--text-muted)',
+          }}
+        >
+          <Globe
+            size={13}
+            style={{
+              color: status.relay_connected ? 'var(--accent-emerald)' : 'var(--text-muted)',
+            }}
+          />
+          <span style={{ fontWeight: 500 }}>
+            {status.relay_connected ? 'Relay Online' : 'Relay Standby'}
+          </span>
         </div>
+
+        {/* Quick Multiaddress Copy Button */}
+        {primaryAddr && (
+          <button
+            type="button"
+            onClick={handleCopyMyAddress}
+            title={copiedAddress ? 'Адресу скопійовано!' : `Скопіювати адресу вузла для прямого з'єднання:\n${primaryAddr}`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              background: copiedAddress ? 'rgba(16, 185, 129, 0.15)' : 'none',
+              border: copiedAddress ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(255, 255, 255, 0.08)',
+              padding: '2px 8px',
+              borderRadius: 'var(--radius-sm)',
+              cursor: 'pointer',
+              color: copiedAddress ? 'var(--accent-emerald)' : 'var(--text-secondary)',
+              transition: 'all 0.2s',
+            }}
+            onMouseEnter={(e) => {
+              if (!copiedAddress) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+            }}
+            onMouseLeave={(e) => {
+              if (!copiedAddress) e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
+            {copiedAddress ? <Check size={13} /> : <Share2 size={13} style={{ color: 'var(--accent-sky)' }} />}
+            <span style={{ fontSize: '0.75rem', fontWeight: 500 }}>
+              {copiedAddress ? 'Скопійовано!' : 'Копіювати адресу'}
+            </span>
+          </button>
+        )}
+
+        {/* Node Identity Key */}
+        <button
+          type="button"
+          onClick={handleCopyMyKey}
+          title={copiedKey ? 'Ключ скопійовано!' : `Скопіювати публічний ключ вузла:\n${status.publisher_key}`}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: copiedKey ? 'rgba(16, 185, 129, 0.15)' : 'none',
+            border: copiedKey ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid transparent',
+            padding: '2px 7px',
+            borderRadius: 'var(--radius-sm)',
+            cursor: 'pointer',
+            color: copiedKey ? 'var(--accent-emerald)' : 'inherit',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            if (!copiedKey) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+          }}
+          onMouseLeave={(e) => {
+            if (!copiedKey) e.currentTarget.style.backgroundColor = 'transparent';
+          }}
+        >
+          {copiedKey ? <Check size={13} /> : <Key size={14} style={{ color: 'var(--text-muted)' }} />}
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
+            {copiedKey ? 'Скопійовано!' : shortKey}
+          </span>
+        </button>
 
         {/* Storage Usage Button */}
         <button

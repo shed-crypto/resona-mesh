@@ -1,17 +1,24 @@
-import { useState } from 'react';
-import { Waves, ShieldAlert } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { Waves, ShieldAlert, ListMusic } from 'lucide-react';
 import { useAudioPlayer } from './shared/hooks/useAudioPlayer';
+import { usePlaylists } from './shared/hooks/usePlaylists';
 import { CatalogView } from './features/library/CatalogView';
 import { AudioPlayerBar } from './features/player/AudioPlayerBar';
 import { NodeStatusPanel } from './features/network/NodeStatusPanel';
 import { ReportTrackModal } from './features/moderation/ReportTrackModal';
 import { ModerationModal } from './features/moderation/ModerationModal';
+import { PlaylistsModal } from './features/playlists/PlaylistsModal';
+import { AddToPlaylistModal } from './features/playlists/AddToPlaylistModal';
 import { Button } from './shared/components/Button';
 import type { Track } from './types/track';
 
 export function App() {
   const [reportTrack, setReportTrack] = useState<Track | null>(null);
   const [isModerationOpen, setIsModerationOpen] = useState(false);
+  const [isPlaylistsOpen, setIsPlaylistsOpen] = useState(false);
+  const [playlistTrackTarget, setPlaylistTrackTarget] = useState<Track | null>(null);
+  const [allKnownTracks, setAllKnownTracks] = useState<Track[]>([]);
+  const [catalogRefreshTrigger, setCatalogRefreshTrigger] = useState(0);
 
   const {
     currentTrack,
@@ -26,7 +33,42 @@ export function App() {
     seek,
     setVolume,
     setIsMuted,
+    queue,
+    queueIndex,
+    isShuffle,
+    isRepeat,
+    playNext,
+    playPrevious,
+    toggleShuffle,
+    toggleRepeat,
+    clearQueue,
   } = useAudioPlayer();
+
+  const {
+    playlists,
+    createPlaylist,
+    deletePlaylist,
+    addTrackToPlaylist,
+    removeTrackFromPlaylist,
+    exportPlaylistManifest,
+    importPlaylistManifest,
+  } = usePlaylists();
+
+  const handleTracksLoaded = useCallback((loaded: Track[]) => {
+    setAllKnownTracks((prev) => {
+      const map = new Map(prev.map((t) => [t.content_id, t]));
+      for (const t of loaded) {
+        map.set(t.content_id, t);
+      }
+      return Array.from(map.values());
+    });
+  }, []);
+
+  const handlePlayPlaylistTracks = useCallback((tracks: Track[]) => {
+    if (tracks.length > 0) {
+      playTrack(tracks[0], tracks);
+    }
+  }, [playTrack]);
 
   return (
     <div
@@ -87,6 +129,15 @@ export function App() {
           <Button
             variant="ghost"
             size="sm"
+            onClick={() => setIsPlaylistsOpen(true)}
+            icon={<ListMusic size={15} style={{ color: 'var(--accent-emerald)' }} />}
+          >
+            Playlists ({playlists.length})
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setIsModerationOpen(true)}
             icon={<ShieldAlert size={15} style={{ color: 'var(--accent-amber)' }} />}
           >
@@ -109,13 +160,18 @@ export function App() {
         <CatalogView
           currentTrack={currentTrack}
           isPlaying={playerState === 'playing'}
-          onPlayTrack={playTrack}
+          onPlayTrack={(track) => playTrack(track)}
           onTogglePlay={togglePlay}
           onReportTrack={(t) => setReportTrack(t)}
+          onAddToPlaylist={(t) => setPlaylistTrackTarget(t)}
+          onOpenPlaylists={() => setIsPlaylistsOpen(true)}
+          playlistsCount={playlists.length}
+          onTracksLoaded={handleTracksLoaded}
+          refreshTrigger={catalogRefreshTrigger}
         />
       </main>
 
-      {/* Bottom Floating Player Dock */}
+      {/* Bottom Floating Player Dock with Queue & Artwork */}
       <AudioPlayerBar
         currentTrack={currentTrack}
         playerState={playerState}
@@ -128,6 +184,43 @@ export function App() {
         onSeek={seek}
         onVolumeChange={setVolume}
         onToggleMute={() => setIsMuted(!isMuted)}
+        queue={queue}
+        queueIndex={queueIndex}
+        isShuffle={isShuffle}
+        isRepeat={isRepeat}
+        onPlayNext={playNext}
+        onPlayPrevious={playPrevious}
+        onToggleShuffle={toggleShuffle}
+        onToggleRepeat={toggleRepeat}
+        onSelectQueueTrack={(t) => playTrack(t, queue)}
+        onClearQueue={clearQueue}
+      />
+
+      {/* Playlists Management Modal */}
+      <PlaylistsModal
+        isOpen={isPlaylistsOpen}
+        onClose={() => setIsPlaylistsOpen(false)}
+        playlists={playlists}
+        allTracks={allKnownTracks}
+        onCreatePlaylist={createPlaylist}
+        onDeletePlaylist={deletePlaylist}
+        onRemoveTrack={removeTrackFromPlaylist}
+        onExportPlaylist={exportPlaylistManifest}
+        onImportPlaylist={importPlaylistManifest}
+        onPlayTracks={handlePlayPlaylistTracks}
+      />
+
+      {/* Add To Playlist Modal */}
+      <AddToPlaylistModal
+        track={playlistTrackTarget}
+        isOpen={Boolean(playlistTrackTarget)}
+        onClose={() => setPlaylistTrackTarget(null)}
+        playlists={playlists}
+        onAddToPlaylist={addTrackToPlaylist}
+        onCreateAndAdd={(title, trackId) => {
+          const pl = createPlaylist(title);
+          addTrackToPlaylist(pl.id, trackId);
+        }}
       />
 
       {/* Moderation & Abuse Reporting Modals */}
@@ -140,6 +233,7 @@ export function App() {
       <ModerationModal
         isOpen={isModerationOpen}
         onClose={() => setIsModerationOpen(false)}
+        onDecisionApplied={() => setCatalogRefreshTrigger((prev) => prev + 1)}
       />
     </div>
   );
