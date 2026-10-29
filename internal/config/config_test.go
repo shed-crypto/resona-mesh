@@ -148,4 +148,47 @@ func TestHeadlessConfiguration(t *testing.T) {
 	}
 }
 
+func TestSTUNServersConfiguration(t *testing.T) {
+	// 1. Default embedded pool
+	cfgDef, err := config.Load("", nil)
+	if err != nil {
+		t.Fatalf("failed to load default config: %v", err)
+	}
+	if len(cfgDef.STUNServers) == 0 || cfgDef.STUNServers[0] != "stun.l.google.com:19302" {
+		t.Fatalf("expected default STUN servers, got: %+v", cfgDef.STUNServers)
+	}
+
+	// 2. Env variable override
+	t.Setenv("RESONAMESH_STUN_SERVERS", "custom.stun.org:3478, stun.cloudflare.com:3478")
+	cfgEnv, err := config.Load("", nil)
+	if err != nil {
+		t.Fatalf("failed to load config with env STUN: %v", err)
+	}
+	if len(cfgEnv.STUNServers) != 2 || cfgEnv.STUNServers[0] != "custom.stun.org:3478" {
+		t.Fatalf("expected env STUN override, got: %+v", cfgEnv.STUNServers)
+	}
+
+	// 3. CLI flag override
+	cliArgs := []string{"--stun-servers", "cli.stun.local:19302"}
+	cfgCLI, err := config.Load("", cliArgs)
+	if err != nil {
+		t.Fatalf("failed to load config with CLI STUN: %v", err)
+	}
+	if len(cfgCLI.STUNServers) != 1 || cfgCLI.STUNServers[0] != "cli.stun.local:19302" {
+		t.Fatalf("expected CLI STUN override, got: %+v", cfgCLI.STUNServers)
+	}
+}
+
+func TestModeratorKeyCLIOverride(t *testing.T) {
+	cliArgs := []string{"--moderator-key", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	cfg, err := config.Load("", cliArgs)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+	if cfg.TrustedModeratorPubKey != "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+		t.Fatalf("expected CLI moderator key override, got: %s", cfg.TrustedModeratorPubKey)
+	}
+}
+
+
 

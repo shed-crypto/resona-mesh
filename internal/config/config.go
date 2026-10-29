@@ -30,6 +30,7 @@ type Config struct {
 	LogLevel               string
 	NATPortMapEnabled      bool
 	BootstrapSeeds         []string
+	STUNServers            []string
 	AllowInsecureHTTP      bool
 	Headless               bool
 	DisableRelay           bool
@@ -37,6 +38,14 @@ type Config struct {
 
 // DefaultBootstrapSeeds defines fallback bootstrap seed endpoints if none are configured.
 var DefaultBootstrapSeeds []string
+
+// DefaultSTUNServers defines fallback public STUN resolvers if none are configured.
+var DefaultSTUNServers = []string{
+	"stun.l.google.com:19302",
+	"stun.cloudflare.com:3478",
+	"stun1.l.google.com:19302",
+	"stun2.l.google.com:19302",
+}
 
 // DefaultConfig returns safe, preconfigured embedded fallback settings.
 func DefaultConfig() *Config {
@@ -50,6 +59,7 @@ func DefaultConfig() *Config {
 		LogLevel:               "INFO",
 		NATPortMapEnabled:      true,
 		BootstrapSeeds:         append([]string(nil), DefaultBootstrapSeeds...),
+		STUNServers:            append([]string(nil), DefaultSTUNServers...),
 		AllowInsecureHTTP:      false,
 		Headless:               false,
 		DisableRelay:           false,
@@ -110,6 +120,11 @@ func Load(envPath string, args []string) (*Config, error) {
 	} else if val := os.Getenv("RESONAMESH_BOOTSTRAP_PEERS"); val != "" {
 		cfg.BootstrapSeeds = parseSeedsString(val)
 	}
+	if val := os.Getenv("RESONAMESH_STUN_SERVERS"); val != "" {
+		cfg.STUNServers = parseSeedsString(val)
+	} else if val := os.Getenv("STUN_SERVERS"); val != "" {
+		cfg.STUNServers = parseSeedsString(val)
+	}
 	if val := os.Getenv("RESONAMESH_ALLOW_INSECURE_HTTP"); val != "" {
 		cfg.AllowInsecureHTTP = strings.EqualFold(val, "true") || val == "1"
 	}
@@ -130,6 +145,8 @@ func Load(envPath string, args []string) (*Config, error) {
 		flagKeeper := fs.Bool("keeper", false, "Enable automatic background replication")
 		flagNATPortMap := fs.Bool("nat-port-map", cfg.NATPortMapEnabled, "Enable automatic router port mapping via UPnP / NAT-PMP")
 		flagBootstrap := fs.String("bootstrap", "", "Comma-separated bootstrap multiaddrs or HTTP(S) endpoint URLs")
+		flagSTUN := fs.String("stun-servers", "", "Comma-separated STUN resolver server endpoints (host:port)")
+		flagModerator := fs.String("moderator-key", "", "Trusted moderator/admin Ed25519 public key in hex")
 		flagInsecureHTTP := fs.Bool("allow-insecure-http", cfg.AllowInsecureHTTP, "Allow HTTP server to bind to non-loopback addresses (container/server environments)")
 		flagHeadless := fs.Bool("headless", cfg.Headless, "Run in headless relay mode with interactive player mutations disabled")
 		flagDisableRelay := fs.Bool("disable-relay", cfg.DisableRelay, "Disable Circuit Relay fallback, requiring direct P2P connections only")
@@ -155,6 +172,12 @@ func Load(envPath string, args []string) (*Config, error) {
 		}
 		if *flagBootstrap != "" {
 			cfg.BootstrapSeeds = parseSeedsString(*flagBootstrap)
+		}
+		if *flagSTUN != "" {
+			cfg.STUNServers = parseSeedsString(*flagSTUN)
+		}
+		if *flagModerator != "" {
+			cfg.TrustedModeratorPubKey = *flagModerator
 		}
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {

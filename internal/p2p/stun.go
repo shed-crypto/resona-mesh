@@ -21,6 +21,13 @@ var DefaultSTUNServers = []string{
 	"stun2.l.google.com:19302",
 }
 
+// SetDefaultSTUNServers updates the fallback STUN resolvers used across NAT resolution routines.
+func SetDefaultSTUNServers(servers []string) {
+	if len(servers) > 0 {
+		DefaultSTUNServers = append([]string(nil), servers...)
+	}
+}
+
 // STUNMagicCookie is the standard RFC 5389 magic cookie value.
 const STUNMagicCookie = 0x2112A442
 
