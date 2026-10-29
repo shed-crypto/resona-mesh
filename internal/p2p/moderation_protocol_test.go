@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"resonamesh/internal/moderation"
 	"resonamesh/internal/storage"
 	"resonamesh/pkg/crypto"
@@ -137,16 +139,16 @@ func TestModerationProtocolExchange(t *testing.T) {
 	}
 
 	// 6. User A syncs decisions from Node B
-	decisions, err := handlerA.SyncDecisions(ctx, hostB.ID(), 0)
+	syncResp, err := handlerA.SyncDecisions(ctx, hostB.ID(), 0)
 	if err != nil {
 		t.Fatalf("node A failed to sync decisions from B: %v", err)
 	}
-	if len(decisions) != 1 {
-		t.Fatalf("expected 1 decision from B, got %d", len(decisions))
+	if len(syncResp.Decisions) != 1 {
+		t.Fatalf("expected 1 decision from B, got %d", len(syncResp.Decisions))
 	}
 
 	// Apply received decision on node A
-	if err := engA.ApplyDecision(ctx, decisions[0]); err != nil {
+	if err := engA.ApplyDecision(ctx, syncResp.Decisions[0]); err != nil {
 		t.Fatalf("node A failed to apply decision: %v", err)
 	}
 
@@ -154,5 +156,115 @@ func TestModerationProtocolExchange(t *testing.T) {
 	blocked, reason, err := engA.IsBlocked(ctx, "track-flagged-404", "")
 	if err != nil || !blocked {
 		t.Fatalf("expected track to be blocked on node A, got blocked=%v, reason=%s", blocked, reason)
+	}
+}
+
+func TestModerationGovernanceSyncCycle(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	rootPub, rootPriv, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate root key: %v", err)
+	}
+	rootPubHex := crypto.PublicKeyToHex(rootPub)
+
+	dirA := t.TempDir()
+	dbA, err := storage.Open(filepath.Join(dirA, "nodeA.sqlite"))
+	if err != nil {
+		t.Fatalf("failed to open db A: %v", err)
+	}
+	defer dbA.Close()
+
+	dirB := t.TempDir()
+	dbB, err := storage.Open(filepath.Join(dirB, "nodeB.sqlite"))
+	if err != nil {
+		t.Fatalf("failed to open db B: %v", err)
+	}
+	defer dbB.Close()
+
+	_, privA, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate key A: %v", err)
+	}
+
+	engA, err := moderation.NewEngine(dbA, moderation.Config{
+		NetworkID:              "test-net",
+		PolicyID:               "global-safety-v1",
+		PolicyEpoch:            1,
+		TrustedModeratorPubKey: rootPubHex,
+	}, privA)
+	if err != nil {
+		t.Fatalf("failed to create engine A: %v", err)
+	}
+
+	engB, err := moderation.NewEngine(dbB, moderation.Config{
+		NetworkID:              "test-net",
+		PolicyID:               "global-safety-v1",
+		PolicyEpoch:            1,
+		TrustedModeratorPubKey: rootPubHex,
+	}, rootPriv)
+	if err != nil {
+		t.Fatalf("failed to create engine B: %v", err)
+	}
+
+	// Node B issues a moderator delegation certificate
+	modPub, _, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate mod key: %v", err)
+	}
+	modPubHex := crypto.PublicKeyToHex(modPub)
+	cert, err := engB.DelegateModerator(ctx, "APPROVE_MODERATOR", modPubHex, "Alice Mod", 86400)
+	if err != nil {
+		t.Fatalf("failed to delegate moderator on B: %v", err)
+	}
+
+	hostA, err := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privA,
+		DisableRelay: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create host A: %v", err)
+	}
+	defer hostA.Close()
+
+	hostB, err := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   rootPriv,
+		DisableRelay: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create host B: %v", err)
+	}
+	defer hostB.Close()
+
+	handlerA := NewModerationHandler(hostA, engA, privA)
+	_ = NewModerationHandler(hostB, engB, rootPriv)
+
+	// Connect hostA and hostB
+	hostA.Raw().Peerstore().AddAddrs(hostB.ID(), hostB.Raw().Addrs(), 24*time.Hour)
+	if err := hostA.Raw().Connect(ctx, peer.AddrInfo{ID: hostB.ID(), Addrs: hostB.Raw().Addrs()}); err != nil {
+		t.Fatalf("failed to connect hostA to hostB: %v", err)
+	}
+
+	// Verify Node A does not have the certificate initially
+	certsBefore, err := engA.ListModeratorCertificates(ctx)
+	if err != nil || len(certsBefore) != 0 {
+		t.Fatalf("expected 0 certs on node A before sync, got %d", len(certsBefore))
+	}
+
+	// Run SyncCycle on node A
+	if err := handlerA.SyncCycle(ctx); err != nil {
+		t.Fatalf("SyncCycle failed: %v", err)
+	}
+
+	// Verify Node A has received and stored the delegated moderator certificate from Node B
+	certsAfter, err := engA.ListModeratorCertificates(ctx)
+	if err != nil || len(certsAfter) != 1 {
+		t.Fatalf("expected 1 cert on node A after sync, got %d (err: %v)", len(certsAfter), err)
+	}
+	if certsAfter[0].ModeratorPubKey != modPubHex || certsAfter[0].Signature != cert.Signature {
+		t.Fatalf("unexpected certificate synced: %+v", certsAfter[0])
 	}
 }

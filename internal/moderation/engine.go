@@ -32,12 +32,14 @@ type Config struct {
 	PolicyID               string
 	PolicyEpoch            uint64
 	TrustedModeratorPubKey string
+	RecoveryPubKey         string
 }
 
 type Engine struct {
 	db             *storage.DB
 	cfg            Config
-	trustedKey     ed25519.PublicKey
+	trustedKey        ed25519.PublicKey
+	currentReleaseKey string
 	nodePrivateKey ed25519.PrivateKey
 	mu             sync.RWMutex
 }
@@ -292,16 +294,16 @@ func (e *Engine) RecordReceipt(ctx context.Context, rc *protocol.ReceiptEvent) e
 
 // ApplyDecision verifies, orders, and applies an incoming moderation decision.
 func (e *Engine) ApplyDecision(ctx context.Context, d *protocol.DecisionEvent) error {
-	e.mu.RLock()
-	trustedKey := e.trustedKey
-	e.mu.RUnlock()
+
+
+
 
 	// 1. Verify moderator key trust
-	if trustedKey != nil {
-		if !strings.EqualFold(crypto.PublicKeyToHex(trustedKey), d.ModeratorKeyHex) {
-			return ErrUntrustedModerator
-		}
+	if !e.isTrustedModerator(ctx, d.ModeratorKeyHex) {
+		return ErrUntrustedModerator
 	}
+
+
 
 	modPubKey, err := crypto.HexToPublicKey(d.ModeratorKeyHex)
 	if err != nil {
@@ -658,4 +660,335 @@ func (e *Engine) ListBlocked(ctx context.Context) ([]BlockedRecord, error) {
 	}
 
 	return records, nil
+}
+
+// isTrustedModerator evaluates whether a given hex public key is authorized to sign
+// decisions and receipts under the current Root Admin and active delegation certificates.
+func (e *Engine) isTrustedModerator(ctx context.Context, keyHex string) bool {
+	e.mu.RLock()
+	trustedRoot := e.trustedKey
+	e.mu.RUnlock()
+
+	// Open mode: if no root key is configured, all keys are accepted
+	if trustedRoot == nil {
+		return true
+	}
+
+	rootHex := crypto.PublicKeyToHex(trustedRoot)
+	if strings.EqualFold(rootHex, keyHex) {
+		return true
+	}
+
+	// Query latest certificate for keyHex
+	query := `
+	SELECT action, expires_at, root_admin_pubkey, signature,
+	       network_id, moderator_pubkey, alias, issued_at
+	FROM moderator_certificates
+	WHERE LOWER(moderator_pubkey) = LOWER(?)
+	ORDER BY issued_at DESC
+	LIMIT 1`
+
+	var action, rootAdmin, sig, netID, modPub, alias string
+	var expiresAt, issuedAt int64
+	err := e.db.Raw().QueryRowContext(ctx, query, keyHex).Scan(
+		&action, &expiresAt, &rootAdmin, &sig,
+		&netID, &modPub, &alias, &issuedAt,
+	)
+	if err != nil {
+		return false
+	}
+
+	if !strings.EqualFold(rootAdmin, rootHex) {
+		return false
+	}
+	if action != "APPROVE_MODERATOR" {
+		return false
+	}
+	if expiresAt > 0 && expiresAt <= time.Now().Unix() {
+		return false
+	}
+
+	rootPubBytes, err := crypto.HexToPublicKey(rootAdmin)
+	if err != nil {
+		return false
+	}
+	sigBytes, err := hex.DecodeString(sig)
+	if err != nil {
+		return false
+	}
+
+	cert := &protocol.ModeratorCertificate{
+		NetworkID:       netID,
+		Action:          action,
+		ModeratorPubKey: modPub,
+		Alias:           alias,
+		IssuedAt:        issuedAt,
+		ExpiresAt:       expiresAt,
+		RootAdminPubKey: rootAdmin,
+	}
+	payload := protocol.CanonicalModeratorCertPayload(cert)
+	return crypto.VerifyWithDomain(rootPubBytes, crypto.DomainModeratorCert, []byte(payload), sigBytes)
+}
+
+// StoreModeratorCertificate verifies and persists an incoming delegation certificate.
+func (e *Engine) StoreModeratorCertificate(ctx context.Context, cert *protocol.ModeratorCertificate) error {
+	e.mu.RLock()
+	trustedRoot := e.trustedKey
+	e.mu.RUnlock()
+
+	if trustedRoot != nil {
+		rootHex := crypto.PublicKeyToHex(trustedRoot)
+		if !strings.EqualFold(rootHex, cert.RootAdminPubKey) {
+			return ErrUntrustedModerator
+		}
+	}
+
+	rootPubBytes, err := crypto.HexToPublicKey(cert.RootAdminPubKey)
+	if err != nil {
+		return fmt.Errorf("moderation: invalid root admin key: %w", err)
+	}
+
+	sigBytes, err := hex.DecodeString(cert.Signature)
+	if err != nil {
+		return ErrInvalidSignature
+	}
+
+	payload := protocol.CanonicalModeratorCertPayload(cert)
+	if !crypto.VerifyWithDomain(rootPubBytes, crypto.DomainModeratorCert, []byte(payload), sigBytes) {
+		return ErrInvalidSignature
+	}
+
+	certID := cert.CertID
+	if certID == "" {
+		certID = crypto.HashChunkHex([]byte(payload))
+		cert.CertID = certID
+	}
+
+	query := `
+	INSERT OR IGNORE INTO moderator_certificates (
+		cert_id, network_id, action, moderator_pubkey, alias,
+		issued_at, expires_at, root_admin_pubkey, signature
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	_, err = e.db.Raw().ExecContext(ctx, query,
+		cert.CertID, cert.NetworkID, cert.Action, cert.ModeratorPubKey, cert.Alias,
+		cert.IssuedAt, cert.ExpiresAt, cert.RootAdminPubKey, cert.Signature,
+	)
+	return err
+}
+
+// DelegateModerator creates, signs, and stores a delegation certificate for a moderator.
+func (e *Engine) DelegateModerator(ctx context.Context, action, modPubKeyHex, alias string, durationSec int64) (*protocol.ModeratorCertificate, error) {
+	e.mu.RLock()
+	trustedRoot := e.trustedKey
+	e.mu.RUnlock()
+
+	if trustedRoot == nil {
+		return nil, errors.New("moderation: no trusted root admin configured on node")
+	}
+	if e.nodePrivateKey == nil {
+		return nil, errors.New("moderation: node private key is required to sign delegation")
+	}
+
+	localPub := e.nodePrivateKey.Public().(ed25519.PublicKey)
+	if !strings.EqualFold(crypto.PublicKeyToHex(localPub), crypto.PublicKeyToHex(trustedRoot)) {
+		return nil, errors.New("moderation: only active root admin can delegate moderators")
+	}
+
+	now := time.Now().Unix()
+	var expiresAt int64
+	if durationSec > 0 {
+		expiresAt = now + durationSec
+	}
+
+	cert := &protocol.ModeratorCertificate{
+		NetworkID:       e.cfg.NetworkID,
+		Action:          action,
+		ModeratorPubKey: modPubKeyHex,
+		Alias:           alias,
+		IssuedAt:        now,
+		ExpiresAt:       expiresAt,
+		RootAdminPubKey: crypto.PublicKeyToHex(trustedRoot),
+	}
+
+	payload := protocol.CanonicalModeratorCertPayload(cert)
+	sig := crypto.SignWithDomain(e.nodePrivateKey, crypto.DomainModeratorCert, []byte(payload))
+	cert.Signature = hex.EncodeToString(sig)
+	cert.CertID = crypto.HashChunkHex([]byte(payload))
+
+	if err := e.StoreModeratorCertificate(ctx, cert); err != nil {
+		return nil, err
+	}
+	return cert, nil
+}
+
+// ApplyKeyRotation validates and persists an emergency key rotation signed by the Recovery Key.
+func (e *Engine) ApplyKeyRotation(ctx context.Context, rot *protocol.KeyRotationEvent) error {
+	e.mu.RLock()
+	expectedRecovery := e.cfg.RecoveryPubKey
+	e.mu.RUnlock()
+
+	if expectedRecovery == "" {
+		return errors.New("moderation: no recovery public key configured to authorize rotation")
+	}
+	if !strings.EqualFold(expectedRecovery, rot.RecoveryPubKey) {
+		return errors.New("moderation: recovery key mismatch in rotation event")
+	}
+
+	recPubBytes, err := crypto.HexToPublicKey(rot.RecoveryPubKey)
+	if err != nil {
+		return fmt.Errorf("moderation: invalid recovery public key: %w", err)
+	}
+
+	sigBytes, err := hex.DecodeString(rot.Signature)
+	if err != nil {
+		return ErrInvalidSignature
+	}
+
+	payload := protocol.CanonicalKeyRotationPayload(rot)
+	if !crypto.VerifyWithDomain(recPubBytes, crypto.DomainKeyRotation, []byte(payload), sigBytes) {
+		return ErrInvalidSignature
+	}
+
+	// Verify epoch is strictly greater than highest stored epoch for this key role
+	var maxEpoch sql.NullInt64
+	err = e.db.Raw().QueryRowContext(ctx, "SELECT MAX(new_policy_epoch) FROM key_rotations WHERE key_role = ?", rot.KeyRole).Scan(&maxEpoch)
+	if err == nil && maxEpoch.Valid && uint64(maxEpoch.Int64) >= rot.NewPolicyEpoch {
+		return fmt.Errorf("moderation: new policy epoch %d must be greater than current %d", rot.NewPolicyEpoch, maxEpoch.Int64)
+	}
+
+	eventID := rot.EventID
+	if eventID == "" {
+		eventID = crypto.HashChunkHex([]byte(payload))
+		rot.EventID = eventID
+	}
+
+	query := `
+	INSERT INTO key_rotations (
+		event_id, network_id, key_role, new_policy_epoch,
+		old_pubkey, new_pubkey, recovery_pubkey, reason, issued_at, signature
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	if _, err := e.db.Raw().ExecContext(ctx, query,
+		rot.EventID, rot.NetworkID, rot.KeyRole, rot.NewPolicyEpoch,
+		rot.OldPubKey, rot.NewPubKey, rot.RecoveryPubKey, rot.Reason, rot.IssuedAt, rot.Signature,
+	); err != nil {
+		return fmt.Errorf("moderation: failed to persist key rotation: %w", err)
+	}
+
+	// Apply rotation to active runtime state
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	switch rot.KeyRole {
+	case "ROOT_ADMIN":
+		newPub, err := crypto.HexToPublicKey(rot.NewPubKey)
+		if err == nil {
+			e.trustedKey = newPub
+			e.cfg.TrustedModeratorPubKey = rot.NewPubKey
+			e.cfg.PolicyEpoch = rot.NewPolicyEpoch
+		}
+	case "RELEASE":
+		e.currentReleaseKey = rot.NewPubKey
+	}
+
+	return nil
+}
+
+// CurrentReleaseKey returns the active release signing public key.
+func (e *Engine) CurrentReleaseKey() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.currentReleaseKey
+}
+
+// SetCurrentReleaseKey sets the active release public key.
+func (e *Engine) SetCurrentReleaseKey(pubHex string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.currentReleaseKey = pubHex
+}
+
+// ListModeratorCertificates returns stored moderator certificates.
+func (e *Engine) ListModeratorCertificates(ctx context.Context) ([]protocol.ModeratorCertificate, error) {
+	query := `
+	SELECT cert_id, network_id, action, moderator_pubkey, alias,
+	       issued_at, expires_at, root_admin_pubkey, signature
+	FROM moderator_certificates
+	ORDER BY issued_at DESC`
+
+	rows, err := e.db.Raw().QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var certs []protocol.ModeratorCertificate
+	for rows.Next() {
+		var c protocol.ModeratorCertificate
+		if err := rows.Scan(
+			&c.CertID, &c.NetworkID, &c.Action, &c.ModeratorPubKey, &c.Alias,
+			&c.IssuedAt, &c.ExpiresAt, &c.RootAdminPubKey, &c.Signature,
+		); err != nil {
+			return nil, err
+		}
+		certs = append(certs, c)
+	}
+	return certs, nil
+}
+
+// ListKeyRotations returns all stored key rotation events.
+func (e *Engine) ListKeyRotations(ctx context.Context) ([]protocol.KeyRotationEvent, error) {
+	query := `
+	SELECT event_id, network_id, key_role, new_policy_epoch,
+	       old_pubkey, new_pubkey, recovery_pubkey, reason, issued_at, signature
+	FROM key_rotations
+	ORDER BY new_policy_epoch DESC`
+
+	rows, err := e.db.Raw().QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rots []protocol.KeyRotationEvent
+	for rows.Next() {
+		var r protocol.KeyRotationEvent
+		if err := rows.Scan(
+			&r.EventID, &r.NetworkID, &r.KeyRole, &r.NewPolicyEpoch,
+			&r.OldPubKey, &r.NewPubKey, &r.RecoveryPubKey, &r.Reason, &r.IssuedAt, &r.Signature,
+		); err != nil {
+			return nil, err
+		}
+		rots = append(rots, r)
+	}
+	return rots, nil
+}
+
+func (e *Engine) loadPersistedRotations(ctx context.Context) error {
+	// Replay latest ROOT_ADMIN rotation
+	var newRootPub string
+	var rootEpoch uint64
+	err := e.db.Raw().QueryRowContext(ctx, `
+		SELECT new_pubkey, new_policy_epoch FROM key_rotations
+		WHERE key_role = 'ROOT_ADMIN'
+		ORDER BY new_policy_epoch DESC LIMIT 1`).Scan(&newRootPub, &rootEpoch)
+	if err == nil && newRootPub != "" {
+		if pubBytes, err := crypto.HexToPublicKey(newRootPub); err == nil {
+			e.trustedKey = pubBytes
+			e.cfg.TrustedModeratorPubKey = newRootPub
+			e.cfg.PolicyEpoch = rootEpoch
+		}
+	}
+
+	// Replay latest RELEASE rotation
+	var newReleasePub string
+	err = e.db.Raw().QueryRowContext(ctx, `
+		SELECT new_pubkey FROM key_rotations
+		WHERE key_role = 'RELEASE'
+		ORDER BY new_policy_epoch DESC LIMIT 1`).Scan(&newReleasePub)
+	if err == nil && newReleasePub != "" {
+		e.currentReleaseKey = newReleasePub
+	}
+
+	return nil
 }

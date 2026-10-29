@@ -72,3 +72,29 @@ type ReceiptEvent struct {
 	ReceivedAt      int64  `json:"received_at"`
 	Signature       string `json:"signature"`
 }
+// ModeratorCertificate delegates or revokes moderation authority from the Root Admin to a moderator key.
+type ModeratorCertificate struct {
+	CertID          string `json:"cert_id"`
+	NetworkID       string `json:"network_id"`
+	Action          string `json:"action"` // "APPROVE_MODERATOR" or "REVOKE_MODERATOR"
+	ModeratorPubKey string `json:"moderator_pubkey"`
+	Alias           string `json:"alias,omitempty"`
+	IssuedAt        int64  `json:"issued_at"`
+	ExpiresAt       int64  `json:"expires_at,omitempty"` // 0 = no expiry
+	RootAdminPubKey string `json:"root_admin_pubkey"`
+	Signature       string `json:"signature"`
+}
+
+// KeyRotationEvent replaces a lost or compromised Root Admin or Release key, signed by the offline Recovery Key.
+type KeyRotationEvent struct {
+	EventID        string `json:"event_id"`
+	NetworkID      string `json:"network_id"`
+	KeyRole        string `json:"key_role"` // "ROOT_ADMIN" or "RELEASE"
+	NewPolicyEpoch uint64 `json:"new_policy_epoch"`
+	OldPubKey      string `json:"old_pubkey"`
+	NewPubKey      string `json:"new_pubkey"`
+	RecoveryPubKey string `json:"recovery_pubkey"`
+	Reason         string `json:"reason"`
+	IssuedAt       int64  `json:"issued_at"`
+	Signature      string `json:"signature"`
+}

@@ -17,6 +17,8 @@ const (
 	DomainDecision = "resonamesh:decision:v1"
 	DomainReport   = "resonamesh:report:v1"
 	DomainReceipt  = "resonamesh:receipt:v1"
+	DomainModeratorCert = "resonamesh:mod-cert:v1"
+	DomainKeyRotation   = "resonamesh:key-rotation:v1"
 )
 
 var (
@@ -130,4 +132,25 @@ func LoadOrCreatePrivateKey(filePath string) (ed25519.PrivateKey, error) {
 
 	return priv, nil
 }
+
+// SavePrivateKey atomically writes an Ed25519 private key in hex encoding to filePath.
+func SavePrivateKey(filePath string, priv ed25519.PrivateKey) error {
+	dir := filepath.Dir(filePath)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return fmt.Errorf("crypto: failed to create key directory: %w", err)
+		}
+	}
+	hexKey := PrivateKeyToHex(priv)
+	tmpPath := filePath + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(hexKey), 0600); err != nil {
+		return fmt.Errorf("crypto: failed to write tmp key: %w", err)
+	}
+	if err := os.Rename(tmpPath, filePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("crypto: failed to replace key file: %w", err)
+	}
+	return nil
+}
+
 
