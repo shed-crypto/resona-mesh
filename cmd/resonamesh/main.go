@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -28,6 +30,7 @@ import (
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
 	"resonamesh/pkg/crypto"
+	"resonamesh/pkg/protocol"
 )
 
 var (
@@ -44,6 +47,16 @@ func main() {
 		}
 	}
 
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "keygen":
+			handleKeygenCLI(os.Args[2:])
+			return
+		case "sign-rotation":
+			handleSignRotationCLI(os.Args[2:])
+			return
+		}
+	}
 	cfg, err := config.Load(".env", os.Args[1:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
@@ -466,4 +479,112 @@ type catalogBlockProvider struct {
 
 func (p *catalogBlockProvider) GetBlock(_ context.Context, _ string, _ int, blockHash string) ([]byte, error) {
 	return p.bs.Get(blockHash)
+}
+
+func handleKeygenCLI(args []string) {
+	fs := flag.NewFlagSet("keygen", flag.ExitOnError)
+	outPath := fs.String("out", "", "Path to write encrypted key bundle JSON")
+	pass := fs.String("pass", "", "Passphrase to encrypt key bundle (or prompts if empty)")
+	_ = fs.Parse(args)
+
+	if *outPath == "" {
+		fmt.Fprintln(os.Stderr, "Error: --out <path> is required")
+		os.Exit(1)
+	}
+
+	passphrase := *pass
+	if passphrase == "" {
+		fmt.Print("Enter passphrase for key bundle encryption: ")
+		_, _ = fmt.Scanln(&passphrase)
+	}
+	if passphrase == "" {
+		fmt.Fprintln(os.Stderr, "Error: passphrase cannot be empty")
+		os.Exit(1)
+	}
+
+	pub, priv, err := crypto.GenerateKeyPair()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate key pair: %v\n", err)
+		os.Exit(1)
+	}
+
+	bundle, err := crypto.ExportEncryptedKey(priv, passphrase)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to encrypt key bundle: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(*outPath, bundle, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write key bundle to %s: %v\n", *outPath, err)
+		os.Exit(1)
+	}
+
+	pubHex := crypto.PublicKeyToHex(pub)
+	fmt.Printf("Generated key bundle successfully written to: %s\n", *outPath)
+	fmt.Printf("Public Key (hex): %s\n", pubHex)
+	os.Exit(0)
+}
+
+func handleSignRotationCLI(args []string) {
+	fs := flag.NewFlagSet("sign-rotation", flag.ExitOnError)
+	recKeyPath := fs.String("recovery-key", "", "Path to encrypted recovery key bundle JSON")
+	pass := fs.String("pass", "", "Passphrase for recovery key bundle")
+	role := fs.String("role", "ROOT_ADMIN", "Key role to rotate: ROOT_ADMIN or RELEASE")
+	oldPub := fs.String("old", "", "Old public key hex")
+	newPub := fs.String("new", "", "New public key hex")
+	epoch := fs.Uint64("epoch", 2, "New policy epoch (must be strictly greater than current)")
+	reason := fs.String("reason", "Key rotation event", "Human-readable justification")
+	netID := fs.String("network", "resonamesh-main", "Network identifier")
+	_ = fs.Parse(args)
+
+	if *recKeyPath == "" || *oldPub == "" || *newPub == "" {
+		fmt.Fprintln(os.Stderr, "Error: --recovery-key, --old, and --new are required")
+		os.Exit(1)
+	}
+
+	bundleBytes, err := os.ReadFile(*recKeyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read recovery key bundle: %v\n", err)
+		os.Exit(1)
+	}
+
+	passphrase := *pass
+	if passphrase == "" {
+		fmt.Print("Enter passphrase for recovery key bundle: ")
+		_, _ = fmt.Scanln(&passphrase)
+	}
+
+	recPriv, err := crypto.ImportEncryptedKey(bundleBytes, passphrase)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to decrypt recovery key: %v\n", err)
+		os.Exit(1)
+	}
+
+	recPub := recPriv.Public().(ed25519.PublicKey)
+	recPubHex := crypto.PublicKeyToHex(recPub)
+
+	rot := &protocol.KeyRotationEvent{
+		NetworkID:      *netID,
+		KeyRole:        *role,
+		NewPolicyEpoch: *epoch,
+		OldPubKey:      strings.ToLower(*oldPub),
+		NewPubKey:      strings.ToLower(*newPub),
+		RecoveryPubKey: recPubHex,
+		Reason:         *reason,
+		IssuedAt:       time.Now().Unix(),
+	}
+
+	payload := protocol.CanonicalKeyRotationPayload(rot)
+	sig := crypto.SignWithDomain(recPriv, crypto.DomainKeyRotation, []byte(payload))
+	rot.Signature = hex.EncodeToString(sig)
+	rot.EventID = crypto.HashChunkHex([]byte(payload))
+
+	jsonBytes, err := json.MarshalIndent(rot, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to serialize rotation event: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(string(jsonBytes))
+	os.Exit(0)
 }
