@@ -111,7 +111,7 @@ func (pe *PeerExchange) QueryPeers(ctx context.Context, target peer.ID) ([]peer.
 		return nil, nil
 	}
 
-	s, err := pe.host.raw.NewStream(ctx, target, PEXProtocolID)
+	s, err := pe.host.NewControlStream(ctx, target, PEXProtocolID)
 	if err != nil {
 		return nil, fmt.Errorf("pex: failed to open stream to %s: %w", target, err)
 	}
