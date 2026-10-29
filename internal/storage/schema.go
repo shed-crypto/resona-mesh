@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     title TEXT NOT NULL,
     artist TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    lyrics TEXT NOT NULL DEFAULT '',
     duration_ms INTEGER NOT NULL,
     bitrate_kbps INTEGER NOT NULL DEFAULT 192,
     total_size_bytes INTEGER NOT NULL,
