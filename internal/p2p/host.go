@@ -45,23 +45,30 @@ const DefaultDirectUpgradeWait = 2500 * time.Millisecond
 
 // HostConfig holds networking configuration for the libp2p host.
 type HostConfig struct {
-	ListenAddr         string
-	ListenAddrs        []string
-	PrivateKey         ed25519.PrivateKey
-	DisableRelay       bool
-	EnableRelayService bool
-	EnableNATPortMap   bool
-	HTTPHandler        http.Handler
+	ListenAddr           string
+	ListenAddrs          []string
+	PrivateKey           ed25519.PrivateKey
+	DisableRelay         bool
+	EnableRelayService   bool
+	RelayMode            string
+	RelayMaxReservations int
+	RelayMaxCircuits     int
+	RelayDataLimitBytes  int64
+	RelayDurationSec     int
+	EnableNATPortMap     bool
+	HTTPHandler          http.Handler
 }
 
 // Host wraps the libp2p Host instance providing lifecycle and identity operations.
 type Host struct {
-	raw          host.Host
-	quicConnMgr  *quicreuse.ConnManager
-	disableRelay bool
-	extraAddrsMu sync.RWMutex
-	extraAddrs   []multiaddr.Multiaddr
-	stunAddrs    []multiaddr.Multiaddr
+	raw            host.Host
+	quicConnMgr    *quicreuse.ConnManager
+	disableRelay   bool
+	relayServiceMu sync.Mutex
+	relayService   *circuitrelay.Relay
+	extraAddrsMu   sync.RWMutex
+	extraAddrs     []multiaddr.Multiaddr
+	stunAddrs      []multiaddr.Multiaddr
 }
 
 // NewHost creates and initializes a libp2p host bound to the node identity key.
@@ -138,11 +145,11 @@ func NewHost(cfg HostConfig) (*Host, error) {
 		return nil, fmt.Errorf("p2p: failed to construct libp2p host: %w", err)
 	}
 
+	h.raw = rawHost
+
 	if cfg.EnableRelayService {
-		if _, err := circuitrelay.New(rawHost, circuitrelay.WithInfiniteLimits()); err != nil {
+		if err := h.EnableDynamicRelayService(cfg); err != nil {
 			slog.Warn("Failed to initialize circuit relay v2 service", "error", err)
-		} else {
-			slog.Info("Circuit relay v2 service active on host with infinite limits")
 		}
 	}
 
@@ -151,7 +158,6 @@ func NewHost(cfg HostConfig) (*Host, error) {
 		"listen_addrs", rawHost.Addrs(),
 	)
 
-	h.raw = rawHost
 	return h, nil
 }
 
@@ -410,8 +416,78 @@ func (h *Host) AddAdvertisedAddr(ma multiaddr.Multiaddr) {
 	h.extraAddrs = append(h.extraAddrs, ma)
 }
 
+// EnableDynamicRelayService starts or configures the Circuit Relay v2 service according to cfg.
+// It is thread-safe and idempotent: if the service is already running, it returns nil.
+func (h *Host) EnableDynamicRelayService(cfg HostConfig) error {
+	if cfg.DisableRelay || cfg.RelayMode == "pex-only" {
+		return nil
+	}
+
+	h.relayServiceMu.Lock()
+	defer h.relayServiceMu.Unlock()
+
+	if h.relayService != nil {
+		return nil
+	}
+
+	rc := circuitrelay.DefaultResources()
+	if cfg.RelayMaxReservations > 0 {
+		rc.MaxReservations = cfg.RelayMaxReservations
+	}
+	if cfg.RelayMaxCircuits > 0 {
+		rc.MaxCircuits = cfg.RelayMaxCircuits
+	}
+
+	var opts []circuitrelay.Option
+	opts = append(opts, circuitrelay.WithResources(rc))
+
+	if cfg.RelayMode == "transit" && cfg.RelayDataLimitBytes <= 0 {
+		opts = append(opts, circuitrelay.WithInfiniteLimits())
+	} else {
+		duration := 120 * time.Second
+		if cfg.RelayDurationSec > 0 {
+			duration = time.Duration(cfg.RelayDurationSec) * time.Second
+		}
+		dataLimit := int64(256 * 1024)
+		if cfg.RelayDataLimitBytes > 0 {
+			dataLimit = cfg.RelayDataLimitBytes
+		}
+		limit := &circuitrelay.RelayLimit{
+			Duration: duration,
+			Data:     dataLimit,
+		}
+		opts = append(opts, circuitrelay.WithLimit(limit))
+	}
+
+	relaySvc, err := circuitrelay.New(h.raw, opts...)
+	if err != nil {
+		return fmt.Errorf("p2p: failed to start circuit relay v2 service: %w", err)
+	}
+
+	h.relayService = relaySvc
+	slog.Info("Circuit relay v2 service dynamically activated",
+		"mode", cfg.RelayMode,
+		"max_reservations", rc.MaxReservations,
+		"max_circuits", rc.MaxCircuits,
+	)
+	return nil
+}
+
+// IsRelayServiceActive reports whether Circuit Relay v2 is currently active on this host.
+func (h *Host) IsRelayServiceActive() bool {
+	h.relayServiceMu.Lock()
+	defer h.relayServiceMu.Unlock()
+	return h.relayService != nil
+}
+
 // Close gracefully closes the host, terminating active connections and streams.
 func (h *Host) Close() error {
+	h.relayServiceMu.Lock()
+	if h.relayService != nil {
+		_ = h.relayService.Close()
+		h.relayService = nil
+	}
+	h.relayServiceMu.Unlock()
 	return h.raw.Close()
 }
 
