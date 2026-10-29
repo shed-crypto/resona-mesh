@@ -29,6 +29,7 @@ import (
 	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
+	"resonamesh/internal/updater"
 	"resonamesh/pkg/crypto"
 	"resonamesh/pkg/protocol"
 )
@@ -37,6 +38,7 @@ var (
 	AppVersion            = "0.1.0-alpha"
 	AppName               = "ResonaMesh"
 	DefaultBootstrapSeeds = ""
+	ReleasePubKey         = ""
 )
 
 func main() {
@@ -57,6 +59,11 @@ func main() {
 			return
 		}
 	}
+	// Clean up any previous executable backup (.old) from auto-updates
+	if exe, err := os.Executable(); err == nil {
+		_ = os.Remove(exe + ".old")
+	}
+
 	cfg, err := config.Load(".env", os.Args[1:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
@@ -428,6 +435,28 @@ func main() {
 	}
 	defer keeper.Stop()
 
+	
+	// 11b. Initialize autonomous P2P auto-updater engine
+	effectiveReleaseKey := ReleasePubKey
+	if cfg.ReleasePubKey != "" {
+		effectiveReleaseKey = cfg.ReleasePubKey
+	}
+	var releaseHandler *p2p.ReleaseHandler
+	updaterEngine, err := updater.NewEngine(updater.Config{
+		CurrentVersion: AppVersion,
+		ReleasePubKey:  effectiveReleaseKey,
+		DataDir:        cfg.DataDir,
+		BlockStore:     bs,
+		RemoteFetcher:  fetcher,
+	})
+	if err != nil {
+		slog.Warn("Failed to initialize auto-updater engine", "error", err)
+	} else {
+		apiServer.SetUpdater(updaterEngine)
+		releaseHandler = p2p.NewReleaseHandler(p2pHost, updaterEngine)
+		apiServer.SetReleaseHandler(releaseHandler)
+	}
+
 	// 12. Wire P2P dependencies and launch HTTP server if not co-hosted
 	apiServer.SetPeerTracker(peerTracker)
 	apiServer.SetSyncer(syncer)
@@ -587,5 +616,84 @@ func handleSignRotationCLI(args []string) {
 	}
 
 	fmt.Println(string(jsonBytes))
+	os.Exit(0)
+}
+
+
+func handleSignReleaseCLI(args []string) {
+	fs := flag.NewFlagSet("sign-release", flag.ExitOnError)
+	binaryPath := fs.String("binary", "", "Path to executable binary to release")
+	version := fs.String("version", "", "Target SemVer version (e.g. 0.2.0)")
+	notes := fs.String("notes", "", "Release notes description")
+	keyPath := fs.String("key", "", "Path to encrypted release private key bundle JSON or raw private key hex")
+	pass := fs.String("pass", "", "Passphrase for encrypted release key bundle")
+	outPath := fs.String("out", "", "Output path for ReleaseManifest JSON (defaults to stdout)")
+	dataDir := fs.String("data-dir", "./data", "BlockStore directory to stage release chunks")
+	_ = fs.Parse(args)
+
+	if *binaryPath == "" || *version == "" || *keyPath == "" {
+		fmt.Fprintln(os.Stderr, "Error: --binary, --version, and --key are required")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	keyData, err := os.ReadFile(*keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read release key file: %v\n", err)
+		os.Exit(1)
+	}
+
+	var privKey ed25519.PrivateKey
+	if decryptedPriv, err := crypto.ImportEncryptedKey(keyData, *pass); err == nil {
+		privKey = decryptedPriv
+	} else {
+		trimmed := strings.TrimSpace(string(keyData))
+		if hexBytes, err := hex.DecodeString(trimmed); err == nil && len(hexBytes) == ed25519.PrivateKeySize {
+			privKey = ed25519.PrivateKey(hexBytes)
+		} else if len(keyData) == ed25519.PrivateKeySize {
+			privKey = ed25519.PrivateKey(keyData)
+		} else {
+			fmt.Fprintf(os.Stderr, "Failed to load release private key (encrypted bundle or 64-byte hex required): %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	bs, err := storage.NewBlockStore(*dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize blockstore: %v\n", err)
+		os.Exit(1)
+	}
+
+	eng, err := updater.NewEngine(updater.Config{
+		CurrentVersion: *version,
+		DataDir:        *dataDir,
+		BlockStore:     bs,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize updater engine: %v\n", err)
+		os.Exit(1)
+	}
+
+	manifest, err := eng.CreateRelease(*binaryPath, *version, *notes, privKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create release manifest: %v\n", err)
+		os.Exit(1)
+	}
+
+	jsonBytes, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to serialize release manifest: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *outPath != "" {
+		if err := os.WriteFile(*outPath, jsonBytes, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to write manifest to %s: %v\n", *outPath, err)
+			os.Exit(1)
+		}
+		fmt.Printf("Release manifest successfully created and saved to %s (binary hash: %s, %d blocks)\n", *outPath, manifest.BinaryHash, len(manifest.BlockHashes))
+	} else {
+		fmt.Println(string(jsonBytes))
+	}
 	os.Exit(0)
 }

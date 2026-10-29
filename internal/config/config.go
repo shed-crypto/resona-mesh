@@ -27,6 +27,7 @@ type Config struct {
 	StorageQuotaBytes      int64
 	KeeperEnabled          bool
 	TrustedModeratorPubKey string
+	ReleasePubKey          string
 	LogLevel               string
 	NATPortMapEnabled      bool
 	BootstrapSeeds         []string
@@ -56,6 +57,7 @@ func DefaultConfig() *Config {
 		StorageQuotaBytes:      5 * 1024 * 1024 * 1024, // 5 GiB
 		KeeperEnabled:          false,
 		TrustedModeratorPubKey: "",
+		ReleasePubKey:          "",
 		LogLevel:               "INFO",
 		NATPortMapEnabled:      true,
 		BootstrapSeeds:         append([]string(nil), DefaultBootstrapSeeds...),
@@ -109,6 +111,9 @@ func Load(envPath string, args []string) (*Config, error) {
 	if val := os.Getenv("RESONAMESH_TRUSTED_MODERATOR_PUBKEY"); val != "" {
 		cfg.TrustedModeratorPubKey = val
 	}
+	if val := os.Getenv("RESONAMESH_RELEASE_PUBKEY"); val != "" {
+		cfg.ReleasePubKey = val
+	}
 	if val := os.Getenv("RESONAMESH_LOG_LEVEL"); val != "" {
 		cfg.LogLevel = strings.ToUpper(val)
 	}
@@ -147,6 +152,7 @@ func Load(envPath string, args []string) (*Config, error) {
 		flagBootstrap := fs.String("bootstrap", "", "Comma-separated bootstrap multiaddrs or HTTP(S) endpoint URLs")
 		flagSTUN := fs.String("stun-servers", "", "Comma-separated STUN resolver server endpoints (host:port)")
 		flagModerator := fs.String("moderator-key", "", "Trusted moderator/admin Ed25519 public key in hex")
+		flagReleaseKey := fs.String("release-pubkey", "", "Trusted release authority Ed25519 public key in hex")
 		flagInsecureHTTP := fs.Bool("allow-insecure-http", cfg.AllowInsecureHTTP, "Allow HTTP server to bind to non-loopback addresses (container/server environments)")
 		flagHeadless := fs.Bool("headless", cfg.Headless, "Run in headless relay mode with interactive player mutations disabled")
 		flagDisableRelay := fs.Bool("disable-relay", cfg.DisableRelay, "Disable Circuit Relay fallback, requiring direct P2P connections only")
@@ -178,6 +184,9 @@ func Load(envPath string, args []string) (*Config, error) {
 		}
 		if *flagModerator != "" {
 			cfg.TrustedModeratorPubKey = *flagModerator
+		}
+		if *flagReleaseKey != "" {
+			cfg.ReleasePubKey = *flagReleaseKey
 		}
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {
