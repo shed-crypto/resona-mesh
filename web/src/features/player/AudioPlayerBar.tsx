@@ -11,9 +11,11 @@ import {
   ListMusic,
   Trash2,
   Download,
+  Mic2,
 } from 'lucide-react';
 import type { Track } from '../../types/track';
 import type { PlayerState } from '../../shared/hooks/useAudioPlayer';
+import { LyricsDrawer } from './LyricsDrawer';
 import { WaveformScrubber } from './WaveformScrubber';
 import { VolumeControl } from './VolumeControl';
 import { Badge } from '../../shared/components/Badge';
@@ -69,6 +71,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   onClearQueue,
 }) => {
   const [isQueueOpen, setIsQueueOpen] = useState(false);
+  const [isLyricsOpen, setIsLyricsOpen] = useState(false);
 
   if (!currentTrack) {
     return null;
@@ -83,6 +86,15 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
   return (
     <>
+      {/* Floating Synchronized Lyrics Drawer */}
+      <LyricsDrawer
+        currentTrack={currentTrack}
+        currentTime={currentTime}
+        isOpen={isLyricsOpen}
+        onClose={() => setIsLyricsOpen(false)}
+        onSeek={onSeek}
+      />
+
       {/* Floating Playback Queue Drawer */}
       {isQueueOpen && (
         <div
@@ -440,6 +452,33 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           ) : (
             <Badge variant="emerald">Live Stream</Badge>
           )}
+
+          {/* Synchronized Lyrics Toggle */}
+          <button
+            onClick={() => {
+              setIsLyricsOpen((prev) => !prev);
+              if (!isLyricsOpen) {
+                setIsQueueOpen(false);
+              }
+            }}
+            style={{
+              background: isLyricsOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
+              border: isLyricsOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+              borderRadius: 'var(--radius-sm)',
+              color: isLyricsOpen ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: '6px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontSize: '0.75rem',
+              transition: 'all 0.15s ease',
+            }}
+            title="Toggle Synchronized Lyrics & Karaoke"
+          >
+            <Mic2 size={16} />
+            <span>Lyrics</span>
+          </button>
 
           {/* Queue Drawer Toggle */}
           <button
