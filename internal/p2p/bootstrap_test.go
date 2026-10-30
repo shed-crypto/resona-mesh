@@ -171,7 +171,7 @@ func TestLiveGistAndRenderWSConnection(t *testing.T) {
 
 	infos, err := resolver.ResolveSeeds(ctx, []string{liveURL})
 	if err != nil {
-		t.Fatalf("failed to resolve seeds from gist: %v", err)
+		t.Fatalf("failed to resolve seeds from live endpoint: %v", err)
 	}
 	if len(infos) == 0 {
 		t.Fatalf("endpoint returned 0 seed peers")
