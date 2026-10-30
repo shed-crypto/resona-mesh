@@ -5,6 +5,7 @@ import { Button } from '../../shared/components/Button';
 import { apiClient } from '../../shared/api/client';
 import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
 import type { PeerRecord } from '../../types/node';
+import { MeshTopologyMap } from './MeshTopologyMap';
 
 interface ConnectPeerModalProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
   const [peers, setPeers] = useState<PeerRecord[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
 
   const fetchPeers = async () => {
     try {
@@ -265,12 +267,12 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
             gap: '10px',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
             <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Activity size={14} style={{ color: 'var(--accent-primary)' }} />
-              Connected Swarm Peers ({peers.length})
+              Swarm Peers & Horizon ({peers.length})
             </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               {syncMsg && (
                 <span style={{ fontSize: '0.72rem', color: 'var(--accent-emerald)' }}>{syncMsg}</span>
               )}
@@ -296,10 +298,54 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
                   {syncing ? 'Syncing...' : 'Sync Catalog'}
                 </button>
               )}
+              <div
+                style={{
+                  display: 'flex',
+                  backgroundColor: 'var(--bg-card)',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-glass)',
+                  padding: '2px',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setViewMode('list')}
+                  style={{
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '2px 8px',
+                    fontSize: '0.68rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    backgroundColor: viewMode === 'list' ? 'var(--bg-hover)' : 'transparent',
+                    color: viewMode === 'list' ? 'var(--text-primary)' : 'var(--text-muted)',
+                  }}
+                >
+                  List
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('map')}
+                  style={{
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '2px 8px',
+                    fontSize: '0.68rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    backgroundColor: viewMode === 'map' ? 'var(--bg-hover)' : 'transparent',
+                    color: viewMode === 'map' ? 'var(--accent-primary)' : 'var(--text-muted)',
+                  }}
+                >
+                  Mesh Map
+                </button>
+              </div>
             </div>
           </div>
 
-          {peers.length === 0 ? (
+          {viewMode === 'map' ? (
+            <MeshTopologyMap peers={peers} localPeerId={status?.peer_id} cacheLimit={64} />
+          ) : peers.length === 0 ? (
             <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
               No peers connected yet. Dial an address below or discover local peers via LAN mDNS.
             </p>
@@ -359,6 +405,20 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                      {!p.connected && (
+                        <span
+                          style={{
+                            color: 'var(--text-muted)',
+                            fontSize: '0.66rem',
+                            backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                            padding: '2px 5px',
+                            borderRadius: 'var(--radius-sm)',
+                          }}
+                          title={p.discovered_via ? `Discovered via ${p.discovered_via}` : 'Known peer'}
+                        >
+                          2-Hop PEX
+                        </span>
+                      )}
                       {isQuarantined ? (
                         <span
                           style={{
