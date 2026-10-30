@@ -244,6 +244,28 @@ func main() {
 		}()
 	}
 
+	// Trigger Google STUN resolution to discover public reflexive WAN endpoint
+	if !cfg.Headless {
+		go func() {
+			stunCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+			defer cancel()
+			if udpAddr, err := p2p.ResolvePublicAddr(stunCtx, p2p.DefaultSTUNServer); err == nil && udpAddr != nil {
+				slog.Info("Resolved public WAN reflexive address via Google STUN",
+					"public_ip", udpAddr.IP.String(),
+					"public_udp_port", udpAddr.Port,
+				)
+				if quicMA, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/udp/%d/quic-v1", udpAddr.IP.String(), cfg.P2PPort)); err == nil {
+					p2pHost.AddAdvertisedAddr(quicMA)
+				}
+				if tcpMA, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", udpAddr.IP.String(), cfg.P2PPort)); err == nil {
+					p2pHost.AddAdvertisedAddr(tcpMA)
+				}
+			} else {
+				slog.Debug("Google STUN resolution notice", "error", err)
+			}
+		}()
+	}
+
 	// Register universal swarm network connection listener
 	p2pHost.Network().Notify(&network.NotifyBundle{
 		ConnectedF: func(n network.Network, c network.Conn) {

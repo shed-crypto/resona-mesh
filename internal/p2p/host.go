@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/libp2p/go-libp2p"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
@@ -42,7 +43,9 @@ type HostConfig struct {
 
 // Host wraps the libp2p Host instance providing lifecycle and identity operations.
 type Host struct {
-	raw host.Host
+	raw          host.Host
+	extraAddrsMu sync.RWMutex
+	extraAddrs   []multiaddr.Multiaddr
 }
 
 // NewHost creates and initializes a libp2p host bound to the node identity key.
@@ -65,12 +68,24 @@ func NewHost(cfg HostConfig) (*Host, error) {
 		return nil, fmt.Errorf("p2p: failed to unmarshal ed25519 private key: %w", err)
 	}
 
+	h := &Host{}
+
 	opts := []libp2p.Option{
 		libp2p.Identity(p2pPrivKey),
 		libp2p.ListenAddrStrings(listenAddrs...),
 		libp2p.Transport(libp2ptcp.NewTCPTransport),
 		libp2p.Transport(libp2pquic.NewTransport),
 		libp2p.Security(noise.ID, noise.New),
+		libp2p.AddrsFactory(func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+			h.extraAddrsMu.RLock()
+			defer h.extraAddrsMu.RUnlock()
+			if len(h.extraAddrs) == 0 {
+				return addrs
+			}
+			res := make([]multiaddr.Multiaddr, len(addrs), len(addrs)+len(h.extraAddrs))
+			copy(res, addrs)
+			return append(res, h.extraAddrs...)
+		}),
 	}
 
 	if cfg.HTTPHandler != nil {
@@ -113,7 +128,8 @@ func NewHost(cfg HostConfig) (*Host, error) {
 		"listen_addrs", rawHost.Addrs(),
 	)
 
-	return &Host{raw: rawHost}, nil
+	h.raw = rawHost
+	return h, nil
 }
 
 // ID returns the libp2p Peer ID derived from the node's public key.
@@ -160,6 +176,21 @@ func (h *Host) ConnectedPeers() []peer.ID {
 // ReserveRelay attempts to reserve a circuit relay v2 slot on the specified relay peer.
 func (h *Host) ReserveRelay(ctx context.Context, relayID peer.ID) (*circuitclient.Reservation, error) {
 	return circuitclient.Reserve(ctx, h.raw, peer.AddrInfo{ID: relayID})
+}
+
+// AddAdvertisedAddr dynamically appends a discovered public reflexive address (e.g. from STUN or UPnP).
+func (h *Host) AddAdvertisedAddr(ma multiaddr.Multiaddr) {
+	if ma == nil {
+		return
+	}
+	h.extraAddrsMu.Lock()
+	defer h.extraAddrsMu.Unlock()
+	for _, existing := range h.extraAddrs {
+		if existing.Equal(ma) {
+			return
+		}
+	}
+	h.extraAddrs = append(h.extraAddrs, ma)
 }
 
 // Close gracefully closes the host, terminating active connections and streams.
