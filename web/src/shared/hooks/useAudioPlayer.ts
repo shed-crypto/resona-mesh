@@ -14,12 +14,15 @@ export function useAudioPlayer() {
   const [bufferedPct, setBufferedPct] = useState(0);
   const [volume, setVolume] = useState(0.85);
   const [isMuted, setIsMuted] = useState(false);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
 
   // Playback Queue & Controls
   const [queue, setQueue] = useState<Track[]>([]);
   const [queueIndex, setQueueIndex] = useState<number>(-1);
   const [isShuffle, setIsShuffle] = useState(false);
   const [isRepeat, setIsRepeat] = useState(false);
+  const [playbackRate, setPlaybackRateState] = useState<number>(1.0);
+  const playbackRateRef = useRef<number>(1.0);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -44,6 +47,7 @@ export function useAudioPlayer() {
     const audio = new Audio();
     audio.preload = 'auto';
     audioRef.current = audio;
+    setAudioElement(audio);
 
     const onPlay = () => setPlayerState('playing');
     const onPause = () => setPlayerState('paused');
@@ -152,6 +156,8 @@ export function useAudioPlayer() {
     const streamUrl = apiClient.getStreamUrl(track.content_id);
     audio.src = streamUrl;
     audio.load();
+    audio.playbackRate = playbackRateRef.current;
+    audio.preservesPitch = true;
     recordLocalPlay(track.content_id, false);
 
     try {
@@ -232,6 +238,15 @@ export function useAudioPlayer() {
     }
   }, [currentTrack]);
 
+  const setPlaybackRate = useCallback((rate: number) => {
+    setPlaybackRateState(rate);
+    playbackRateRef.current = rate;
+    if (audioRef.current) {
+      audioRef.current.playbackRate = rate;
+      audioRef.current.preservesPitch = true;
+    }
+  }, []);
+
   const seek = useCallback((targetTimeSeconds: number) => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -275,6 +290,7 @@ export function useAudioPlayer() {
   }, [currentTrack, playNext, playPrevious]);
 
   return {
+    audioElement,
     currentTrack,
     playerState,
     currentTime,
@@ -287,6 +303,8 @@ export function useAudioPlayer() {
     playTrack,
     togglePlay,
     seek,
+    playbackRate,
+    setPlaybackRate,
     isPlaying: playerState === 'playing',
     // Queue & Controls
     queue,

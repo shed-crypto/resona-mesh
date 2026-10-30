@@ -21,6 +21,7 @@ export function App() {
   const [catalogRefreshTrigger, setCatalogRefreshTrigger] = useState(0);
 
   const {
+    audioElement,
     currentTrack,
     playerState,
     currentTime,
@@ -31,6 +32,8 @@ export function App() {
     playTrack,
     togglePlay,
     seek,
+    playbackRate,
+    setPlaybackRate,
     setVolume,
     setIsMuted,
     queue,
@@ -173,6 +176,7 @@ export function App() {
 
       {/* Bottom Floating Player Dock with Queue & Artwork */}
       <AudioPlayerBar
+        audioElement={audioElement}
         currentTrack={currentTrack}
         playerState={playerState}
         currentTime={currentTime}
@@ -182,6 +186,8 @@ export function App() {
         isMuted={isMuted}
         onTogglePlay={togglePlay}
         onSeek={seek}
+        playbackRate={playbackRate}
+        onPlaybackRateChange={setPlaybackRate}
         onVolumeChange={setVolume}
         onToggleMute={() => setIsMuted(!isMuted)}
         queue={queue}
