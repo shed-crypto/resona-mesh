@@ -487,20 +487,23 @@ func (pe *PeerExchange) QueryPeers(ctx context.Context, target peer.ID) ([]peer.
 		pe.RegisterRelay(r)
 	}
 
-	// Cap peer connections to maxSwarmPeers
-	currentConns := len(pe.host.ConnectedPeers())
-	if pe.maxSwarmPeers > 0 && currentConns >= pe.maxSwarmPeers {
-		return nil, nil
-	}
-
 	var connected []peer.ID
 	for _, pi := range resp.Peers {
-		if pi.ID == pe.host.ID() || len(pe.host.raw.Network().ConnsToPeer(pi.ID)) > 0 {
+		if pi.ID == pe.host.ID() {
+			continue
+		}
+
+		// Record the 2-hop referral in the bounded peer tracker before attempting dial
+		if pe.tracker != nil {
+			pe.tracker.RecordPeerVia(pi, len(pe.host.raw.Network().ConnsToPeer(pi.ID)) > 0, target)
+		}
+
+		if len(pe.host.raw.Network().ConnsToPeer(pi.ID)) > 0 {
 			continue
 		}
 
 		if pe.maxSwarmPeers > 0 && len(pe.host.ConnectedPeers()) >= pe.maxSwarmPeers {
-			break
+			continue
 		}
 
 		if !pe.disableRelay {
@@ -520,7 +523,7 @@ func (pe *PeerExchange) QueryPeers(ctx context.Context, target peer.ID) ([]peer.
 			slog.Info("Successfully connected to peer discovered via PEX", "peer_id", pi.ID.String())
 			connected = append(connected, pi.ID)
 			if pe.tracker != nil {
-				pe.tracker.RecordPeer(pi, true)
+				pe.tracker.RecordPeerVia(pi, true, target)
 			}
 		}
 	}
