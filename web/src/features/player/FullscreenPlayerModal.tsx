@@ -166,8 +166,8 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
         const y = height - barHeight;
 
         const gradient = ctx.createLinearGradient(0, y, 0, height);
-        gradient.addColorStop(0, '#10b981');
-        gradient.addColorStop(1, '#06b6d4');
+        gradient.addColorStop(0, '#f97316');
+        gradient.addColorStop(1, '#ea580c');
 
         ctx.fillStyle = gradient;
         ctx.beginPath();
@@ -238,11 +238,11 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
               width: '32px',
               height: '32px',
               borderRadius: 'var(--radius-md)',
-              backgroundColor: 'rgba(16, 185, 129, 0.15)',
+              backgroundColor: 'rgba(249, 115, 22, 0.15)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--accent-emerald)',
+              color: 'var(--accent-primary)',
             }}
           >
             <Disc size={18} />
@@ -324,10 +324,8 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                 height: '100%',
                 borderRadius: 'var(--radius-lg)',
                 objectFit: 'cover',
-                boxShadow: isPlaying
-                  ? '0 16px 40px rgba(16, 185, 129, 0.3), 0 0 20px rgba(0, 0, 0, 0.8)'
-                  : '0 12px 30px rgba(0, 0, 0, 0.6)',
-                border: isPlaying ? '2px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+                boxShadow: '0 12px 32px rgba(0, 0, 0, 0.6)',
+                border: isPlaying ? '2px solid var(--accent-primary)' : '1px solid var(--border-glass)',
                 transition: 'box-shadow 0.3s ease, border-color 0.3s ease',
               }}
             />
@@ -360,7 +358,7 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
               {currentTrack.artist}
             </p>
             <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
-              <Badge variant="emerald">{currentTrack.bitrate_kbps} kbps</Badge>
+              <Badge variant="primary">{currentTrack.bitrate_kbps} kbps</Badge>
               <Badge variant="cyan">{currentTrack.license_code}</Badge>
             </div>
           </div>
@@ -409,10 +407,10 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                     setIsSleepMenuOpen(false);
                   }}
                   style={{
-                    background: playbackRate !== 1.0 ? 'rgba(16, 185, 129, 0.18)' : 'none',
+                    background: playbackRate !== 1.0 ? 'rgba(249, 115, 22, 0.18)' : 'none',
                     border: '1px solid var(--border-glass)',
                     borderRadius: 'var(--radius-sm)',
-                    color: playbackRate !== 1.0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                    color: playbackRate !== 1.0 ? 'var(--accent-primary)' : 'var(--text-muted)',
                     padding: '6px 8px',
                     cursor: 'pointer',
                     display: 'flex',
@@ -452,10 +450,10 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                           setIsRateMenuOpen(false);
                         }}
                         style={{
-                          background: playbackRate === rate ? 'rgba(16, 185, 129, 0.15)' : 'none',
+                          background: playbackRate === rate ? 'rgba(249, 115, 22, 0.15)' : 'none',
                           border: 'none',
                           borderRadius: 'var(--radius-sm)',
-                          color: playbackRate === rate ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                          color: playbackRate === rate ? 'var(--accent-primary)' : 'var(--text-primary)',
                           cursor: 'pointer',
                           padding: '6px 12px',
                           fontSize: '0.75rem',
@@ -477,10 +475,10 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                     setIsRateMenuOpen(false);
                   }}
                   style={{
-                    background: sleepTimerOption !== 0 ? 'rgba(16, 185, 129, 0.18)' : 'none',
+                    background: sleepTimerOption !== 0 ? 'rgba(249, 115, 22, 0.18)' : 'none',
                     border: '1px solid var(--border-glass)',
                     borderRadius: 'var(--radius-sm)',
-                    color: sleepTimerOption !== 0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                    color: sleepTimerOption !== 0 ? 'var(--accent-primary)' : 'var(--text-muted)',
                     padding: '6px 8px',
                     cursor: 'pointer',
                     display: 'flex',
@@ -527,10 +525,10 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                           setIsSleepMenuOpen(false);
                         }}
                         style={{
-                          background: sleepTimerOption === opt.val ? 'rgba(16, 185, 129, 0.15)' : 'none',
+                          background: sleepTimerOption === opt.val ? 'rgba(249, 115, 22, 0.15)' : 'none',
                           border: 'none',
                           borderRadius: 'var(--radius-sm)',
-                          color: sleepTimerOption === opt.val ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                          color: sleepTimerOption === opt.val ? 'var(--accent-primary)' : 'var(--text-primary)',
                           cursor: 'pointer',
                           padding: '6px 12px',
                           fontSize: '0.75rem',
@@ -554,7 +552,7 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                   style={{
                     background: 'none',
                     border: 'none',
-                    color: isShuffle ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                    color: isShuffle ? 'var(--accent-primary)' : 'var(--text-muted)',
                     cursor: 'pointer',
                     padding: '6px',
                   }}
@@ -586,14 +584,14 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                   width: '46px',
                   height: '46px',
                   borderRadius: 'var(--radius-full)',
-                  backgroundColor: 'var(--accent-emerald)',
+                  backgroundColor: 'var(--accent-primary)',
                   color: '#000',
                   border: 'none',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   cursor: 'pointer',
-                  boxShadow: '0 0 20px rgba(16, 185, 129, 0.4)',
+                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
                 }}
               >
                 {isPlaying ? <Pause size={22} /> : <Play size={22} style={{ marginLeft: '2px' }} />}
@@ -621,7 +619,7 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                   style={{
                     background: 'none',
                     border: 'none',
-                    color: isRepeat ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                    color: isRepeat ? 'var(--accent-primary)' : 'var(--text-muted)',
                     cursor: 'pointer',
                     padding: '6px',
                   }}
@@ -647,7 +645,7 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                 step="0.01"
                 value={isMuted ? 0 : volume}
                 onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
-                style={{ width: '100%', accentColor: 'var(--accent-emerald)', cursor: 'pointer' }}
+                style={{ width: '100%', accentColor: 'var(--accent-primary)', cursor: 'pointer' }}
               />
             </div>
           </div>
@@ -688,10 +686,10 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                   style={{
-                    background: isSelected ? 'rgba(16, 185, 129, 0.15)' : 'none',
-                    border: isSelected ? '1px solid var(--accent-emerald)' : '1px solid transparent',
+                    background: isSelected ? 'rgba(249, 115, 22, 0.15)' : 'none',
+                    border: isSelected ? '1px solid var(--accent-primary)' : '1px solid transparent',
                     borderRadius: 'var(--radius-md)',
-                    color: isSelected ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                    color: isSelected ? 'var(--accent-primary)' : 'var(--text-muted)',
                     cursor: 'pointer',
                     padding: '8px 14px',
                     fontSize: '0.82rem',
@@ -752,16 +750,16 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                         borderRadius: 'var(--radius-md)',
                         cursor: 'pointer',
                         transition: 'all 0.25s ease',
-                        backgroundColor: isActive ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
-                        borderLeft: isActive ? '3px solid var(--accent-emerald)' : '3px solid transparent',
+                        backgroundColor: isActive ? 'rgba(249, 115, 22, 0.12)' : 'transparent',
+                        borderLeft: isActive ? '3px solid var(--accent-primary)' : '3px solid transparent',
                         color: isActive
-                          ? 'var(--accent-emerald)'
+                          ? 'var(--accent-primary)'
                           : isPast
                           ? 'rgba(255, 255, 255, 0.35)'
                           : 'rgba(255, 255, 255, 0.85)',
                         fontSize: isActive ? '1.25rem' : '1.02rem',
                         fontWeight: isActive ? 600 : 400,
-                        textShadow: isActive ? '0 0 16px rgba(16, 185, 129, 0.4)' : 'none',
+                        textShadow: 'none',
                         transform: isActive ? 'scale(1.02)' : 'none',
                       }}
                     >
@@ -810,8 +808,8 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         padding: '12px 16px',
-                        backgroundColor: isCurrent ? 'rgba(16, 185, 129, 0.12)' : 'rgba(255, 255, 255, 0.02)',
-                        border: isCurrent ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+                        backgroundColor: isCurrent ? 'rgba(249, 115, 22, 0.12)' : 'rgba(255, 255, 255, 0.02)',
+                        border: isCurrent ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
                         borderRadius: 'var(--radius-md)',
                         cursor: 'pointer',
                         transition: 'background-color 0.15s ease',
@@ -826,7 +824,7 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                             style={{
                               fontSize: '0.88rem',
                               fontWeight: isCurrent ? 600 : 500,
-                              color: isCurrent ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                              color: isCurrent ? 'var(--accent-primary)' : 'var(--text-primary)',
                               whiteSpace: 'nowrap',
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
@@ -847,7 +845,7 @@ export const FullscreenPlayerModal: React.FC<FullscreenPlayerModalProps> = ({
                           </div>
                         </div>
                       </div>
-                      {isCurrent && <Badge variant="emerald">Now Playing</Badge>}
+                      {isCurrent && <Badge variant="primary">Now Playing</Badge>}
                     </div>
                   );
                 })

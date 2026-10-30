@@ -21,20 +21,23 @@ export const VolumeControl: React.FC<VolumeControlProps> = ({
       <button
         onClick={onToggleMute}
         style={{
+          background: 'none',
+          border: 'none',
           color: isMuted ? 'var(--accent-rose)' : 'var(--text-secondary)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           padding: '4px',
+          cursor: 'pointer',
         }}
         title={isMuted ? 'Unmute' : 'Mute'}
       >
         {isMuted || effectiveVolume === 0 ? (
-          <VolumeX size={18} />
+          <VolumeX size={17} />
         ) : effectiveVolume < 0.5 ? (
-          <Volume1 size={18} />
+          <Volume1 size={17} />
         ) : (
-          <Volume2 size={18} />
+          <Volume2 size={17} />
         )}
       </button>
 
@@ -48,13 +51,10 @@ export const VolumeControl: React.FC<VolumeControlProps> = ({
           onVolumeChange(parseFloat(e.target.value));
           if (isMuted) onToggleMute();
         }}
+        className="volume-slider"
         style={{
-          width: '76px',
+          width: '74px',
           height: '4px',
-          appearance: 'none',
-          backgroundColor: 'rgba(255, 255, 255, 0.15)',
-          borderRadius: 'var(--radius-full)',
-          outline: 'none',
           cursor: 'pointer',
         }}
       />

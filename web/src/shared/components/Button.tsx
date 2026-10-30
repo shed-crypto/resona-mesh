@@ -46,10 +46,10 @@ export const Button: React.FC<ButtonProps> = ({
     switch (variant) {
       case 'primary':
         return {
-          backgroundColor: 'var(--accent-emerald)',
-          color: '#000',
+          backgroundColor: 'var(--accent-primary, #f97316)',
+          color: '#ffffff',
           fontWeight: 600,
-          boxShadow: '0 0 16px rgba(16, 185, 129, 0.25)',
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.25)',
         };
       case 'ghost':
         return {
@@ -61,7 +61,7 @@ export const Button: React.FC<ButtonProps> = ({
         return {
           backgroundColor: 'rgba(244, 63, 94, 0.12)',
           color: 'var(--accent-rose)',
-          border: '1px solid rgba(244, 63, 94, 0.3)',
+          border: '1px solid rgba(244, 63, 94, 0.25)',
         };
       case 'secondary':
       default:

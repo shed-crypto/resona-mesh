@@ -1,17 +1,21 @@
 :root {
-  --bg-canvas: #0b0d10;
-  --bg-surface: #14171d;
-  --bg-card: #1c212a;
-  --bg-hover: #262c38;
-  --border-glass: rgba(255, 255, 255, 0.08);
-  --border-active: rgba(255, 255, 255, 0.16);
+  /* Nordic Minimal Carbon Palette */
+  --bg-canvas: #141416;
+  --bg-surface: #1a1a1d;
+  --bg-card: #222226;
+  --bg-hover: #2c2c32;
+  --border-glass: rgba(255, 255, 255, 0.06);
+  --border-active: rgba(255, 255, 255, 0.14);
 
-  --text-primary: #f3f4f6;
-  --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
+  --text-primary: #f4f4f6;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
 
-  --accent-emerald: #10b981;
-  --accent-cyan: #06b6d4;
+  /* Nordic Warm Amber Accent */
+  --accent-primary: #f97316;
+  --accent-primary-hover: #ea580c;
+  --accent-emerald: #22c55e;
+  --accent-cyan: #38bdf8;
   --accent-amber: #f59e0b;
   --accent-rose: #f43f5e;
 
@@ -23,8 +27,8 @@
   --radius-lg: 14px;
   --radius-full: 9999px;
 
-  --shadow-panel: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-  --glass-blur: blur(12px);
+  --shadow-panel: 0 16px 40px 0 rgba(0, 0, 0, 0.5);
+  --glass-blur: blur(16px);
 }
 
 * {
@@ -90,8 +94,48 @@ input, textarea, select {
   animation: shimmer 1.5s infinite;
 }
 
-/* Responsive Player Bar Tool Labels */
-@media (max-width: 1320px) {
+/* Responsive Player Bar Tool Labels & Sliders */
+input[type="range"] {
+  accent-color: var(--accent-primary);
+}
+
+.volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+  outline: none;
+  height: 4px;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  transition: transform 0.1s ease, background-color 0.1s ease;
+}
+
+.volume-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  background: var(--accent-primary);
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: none;
+  background: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
+@media (max-width: 1200px) {
   .player-btn-label {
     display: none !important;
   }
