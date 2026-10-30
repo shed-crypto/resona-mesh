@@ -14,6 +14,7 @@ export function useAudioPlayer() {
   const [bufferedPct, setBufferedPct] = useState(0);
   const [volume, setVolume] = useState(0.85);
   const [isMuted, setIsMuted] = useState(false);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
 
   // Playback Queue & Controls
   const [queue, setQueue] = useState<Track[]>([]);
@@ -44,6 +45,7 @@ export function useAudioPlayer() {
     const audio = new Audio();
     audio.preload = 'auto';
     audioRef.current = audio;
+    setAudioElement(audio);
 
     const onPlay = () => setPlayerState('playing');
     const onPause = () => setPlayerState('paused');
@@ -275,6 +277,7 @@ export function useAudioPlayer() {
   }, [currentTrack, playNext, playPrevious]);
 
   return {
+    audioElement,
     currentTrack,
     playerState,
     currentTime,
