@@ -1514,3 +1514,116 @@ func TestTrackLyricsEndpoint(t *testing.T) {
 	}
 }
 
+
+func TestTrackMetadataAndRecommendationsEndpoints(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	// 1. Import Track A with initial metadata
+	var reqBodyA bytes.Buffer
+	writerA := multipart.NewWriter(&reqBodyA)
+	_ = writerA.WriteField("title", "Nordic Horizon")
+	_ = writerA.WriteField("artist", "Arctic Sound")
+	_ = writerA.WriteField("license", protocol.LicenseCC0)
+	_ = writerA.WriteField("genre", "Ambient")
+	_ = writerA.WriteField("bpm", "85")
+	_ = writerA.WriteField("mood", "Peaceful")
+	_ = writerA.WriteField("tags", "nordic,cold,drone")
+	partA, _ := writerA.CreateFormFile("audio_file", "horizon.mp3")
+	_, _ = partA.Write([]byte("audio bytes A 1234567890"))
+	_ = writerA.Close()
+
+	respA, err := http.Post(ts.URL+"/api/v1/tracks/import", writerA.FormDataContentType(), &reqBodyA)
+	if err != nil {
+		t.Fatalf("import track A failed: %v", err)
+	}
+	defer respA.Body.Close()
+	var resA struct {
+		Track catalog.Track `json:"track"`
+	}
+	_ = json.NewDecoder(respA.Body).Decode(&resA)
+	idA := resA.Track.ContentID
+	if resA.Track.Genre != "Ambient" || resA.Track.BPM != 85 || len(resA.Track.Tags) != 3 {
+		t.Fatalf("unexpected imported metadata for A: %+v", resA.Track)
+	}
+
+	// 2. Import Track B (Similar: Ambient, 88 BPM, tags nordic,drone)
+	var reqBodyB bytes.Buffer
+	writerB := multipart.NewWriter(&reqBodyB)
+	_ = writerB.WriteField("title", "Glacier Whispers")
+	_ = writerB.WriteField("artist", "Arctic Sound")
+	_ = writerB.WriteField("license", protocol.LicenseCC0)
+	_ = writerB.WriteField("genre", "Ambient")
+	_ = writerB.WriteField("bpm", "88")
+	_ = writerB.WriteField("mood", "Peaceful")
+	_ = writerB.WriteField("tags", "nordic,drone")
+	partB, _ := writerB.CreateFormFile("audio_file", "whispers.mp3")
+	_, _ = partB.Write([]byte("audio bytes B 1234567890"))
+	_ = writerB.Close()
+
+	respB, err := http.Post(ts.URL+"/api/v1/tracks/import", writerB.FormDataContentType(), &reqBodyB)
+	if err != nil {
+		t.Fatalf("import track B failed: %v", err)
+	}
+	defer respB.Body.Close()
+	var resB struct {
+		Track catalog.Track `json:"track"`
+	}
+	_ = json.NewDecoder(respB.Body).Decode(&resB)
+	idB := resB.Track.ContentID
+
+	// 3. Test GET /api/v1/tracks/{id}/recommendations for Track A
+	recResp, err := http.Get(fmt.Sprintf("%s/api/v1/tracks/%s/recommendations?limit=5", ts.URL, idA))
+	if err != nil {
+		t.Fatalf("GET recommendations failed: %v", err)
+	}
+	defer recResp.Body.Close()
+	if recResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", recResp.StatusCode)
+	}
+	var recData struct {
+		ContentID       string                        `json:"content_id"`
+		Recommendations []catalog.TrackRecommendation `json:"recommendations"`
+	}
+	if err := json.NewDecoder(recResp.Body).Decode(&recData); err != nil {
+		t.Fatalf("decode recommendations failed: %v", err)
+	}
+	if len(recData.Recommendations) != 1 || recData.Recommendations[0].Track.ContentID != idB {
+		t.Fatalf("expected track B as recommendation, got: %+v", recData.Recommendations)
+	}
+	if recData.Recommendations[0].Score <= 0 {
+		t.Fatalf("expected positive similarity score, got %f", recData.Recommendations[0].Score)
+	}
+
+	// 4. Test PUT /api/v1/tracks/{id}/metadata
+	updatePayload, _ := json.Marshal(map[string]interface{}{
+		"genre": "Neo-Classical",
+		"tags":  []string{"piano", "acoustic", "nordic"},
+		"bpm":   90,
+		"mood":  "Nostalgic",
+	})
+	putReq, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/tracks/%s/metadata", ts.URL, idA), bytes.NewReader(updatePayload))
+	putReq.Header.Set("Content-Type", "application/json")
+	putResp, err := http.DefaultClient.Do(putReq)
+	if err != nil {
+		t.Fatalf("PUT metadata failed: %v", err)
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for PUT metadata, got %d", putResp.StatusCode)
+	}
+
+	var updateRes struct {
+		Status string        `json:"status"`
+		Track  catalog.Track `json:"track"`
+	}
+	if err := json.NewDecoder(putResp.Body).Decode(&updateRes); err != nil {
+		t.Fatalf("decode update result failed: %v", err)
+	}
+	if updateRes.Track.Genre != "Neo-Classical" || updateRes.Track.BPM != 90 || updateRes.Track.Mood != "Nostalgic" {
+		t.Fatalf("unexpected updated track metadata: %+v", updateRes.Track)
+	}
+	if len(updateRes.Track.Tags) != 3 || updateRes.Track.Tags[0] != "piano" {
+		t.Fatalf("unexpected updated tags: %+v", updateRes.Track.Tags)
+	}
+}
