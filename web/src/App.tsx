@@ -32,6 +32,8 @@ export function App() {
     playTrack,
     togglePlay,
     seek,
+    playbackRate,
+    setPlaybackRate,
     setVolume,
     setIsMuted,
     queue,
@@ -184,6 +186,8 @@ export function App() {
         isMuted={isMuted}
         onTogglePlay={togglePlay}
         onSeek={seek}
+        playbackRate={playbackRate}
+        onPlaybackRateChange={setPlaybackRate}
         onVolumeChange={setVolume}
         onToggleMute={() => setIsMuted(!isMuted)}
         queue={queue}
