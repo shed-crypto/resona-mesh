@@ -19,8 +19,8 @@ Before modifying any subsystem, consult this matrix to verify what is already im
 | **Milestone 11: Autonomous P2P Client Auto-Updater** | Implemented | `internal/updater/engine.go`, `internal/updater/version.go`, `internal/p2p/release_protocol.go`, `web/src/features/network/UpdaterModal.tsx` |
 | **Priority 0: Smart Relay Orchestration & Dormant Bootstrap** | Implemented | `internal/config/config.go`, `internal/p2p/host.go`, `internal/p2p/pex.go`, `internal/p2p/bootstrap.go`, `internal/p2p/relay_orchestration_test.go` |
 | **Priority 1: Milestone 12 — Synchronized Lyrics (`.lrc`)** | Implemented | `pkg/protocol/types.go`, `internal/storage/sqlite.go`, `internal/catalog/catalog.go`, `internal/api/server.go`, `web/src/shared/utils/lrcParser.ts`, `web/src/features/player/LyricsDrawer.tsx` |
-| **Priority 2: Milestone 14 — Studio Audio Suite (EQ & Fullscreen)** | **Next Up (P2)** | `web/src/features/player/useAudioEqualizer.ts`, `web/src/features/player/FullscreenPlayerModal.tsx` |
-| **Priority 3: Milestone 15 — Metadata Tags & Local Swarm Radio** | **Planned (P3)** | `internal/catalog/recommendations.go`, `internal/api/server.go` |
+| **Priority 2: Milestone 14 — Studio Audio Suite (EQ & Fullscreen)** | Implemented | `web/src/features/player/useAudioEqualizer.ts`, `web/src/features/player/EqualizerDrawer.tsx`, `web/src/features/player/useSleepTimer.ts`, `web/src/features/player/FullscreenPlayerModal.tsx` |
+| **Priority 3: Milestone 15 — Metadata Tags & Local Swarm Radio** | **Next Up (P3)** | `internal/catalog/recommendations.go`, `internal/api/server.go` |
 | **Priority 4: Milestone 13 — Local Swarm Reputation & Quarantine** | **Planned (P4)** | `internal/p2p/reputation.go`, `internal/p2p/fetcher.go` |
 
 ---
@@ -362,6 +362,7 @@ Modern music platforms (such as YouTube Music) provide real-time synchronized ly
 
 ## 4. Priority 2: Milestone 14 — Studio Audio Suite (5-Band EQ, Speed, Sleep Timer & Fullscreen Mode)
 
+> **Status**: Implemented & Verified in `feature/studio-audio-suite`, merged to `develop`
 > **Target Branch**: `feature/studio-audio-suite`
 
 ### 4.1 Exact Code Implementation Specification
