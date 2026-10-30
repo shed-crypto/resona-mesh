@@ -10,25 +10,31 @@ import (
 	"time"
 )
 
-const (
-	// DefaultSTUNServer is Google's canonical public STUN resolver.
-	DefaultSTUNServer = "stun.l.google.com:19302"
+// DefaultSTUNServer is Google's canonical public STUN resolver.
+const DefaultSTUNServer = "stun.l.google.com:19302"
 
-	// STUNMagicCookie is the standard RFC 5389 magic cookie value.
-	STUNMagicCookie = 0x2112A442
+// DefaultSTUNServers defines reliable, public STUN resolvers with automatic fallback.
+var DefaultSTUNServers = []string{
+	"stun.l.google.com:19302",
+	"stun1.l.google.com:19302",
+	"stun2.l.google.com:19302",
+	"stun.cloudflare.com:3478",
+}
 
-	// STUNBindingRequest is the RFC 5389 Binding Request message type.
-	STUNBindingRequest = 0x0001
+// STUNMagicCookie is the standard RFC 5389 magic cookie value.
+const STUNMagicCookie = 0x2112A442
 
-	// STUNBindingResponse is the RFC 5389 Binding Response message type.
-	STUNBindingResponse = 0x0101
+// STUNBindingRequest is the RFC 5389 Binding Request message type.
+const STUNBindingRequest = 0x0001
 
-	// AttrXORMappedAddress is the RFC 5389 attribute for XOR-encoded public endpoint.
-	AttrXORMappedAddress = 0x0020
+// STUNBindingResponse is the RFC 5389 Binding Response message type.
+const STUNBindingResponse = 0x0101
 
-	// AttrMappedAddress is the legacy RFC 3489 attribute for raw public endpoint.
-	AttrMappedAddress = 0x0001
-)
+// AttrXORMappedAddress is the RFC 5389 attribute for XOR-encoded public endpoint.
+const AttrXORMappedAddress = 0x0020
+
+// AttrMappedAddress is the legacy RFC 3489 attribute for raw public endpoint.
+const AttrMappedAddress = 0x0001
 
 var (
 	ErrSTUNTimeout   = errors.New("stun: resolution request timed out")
@@ -36,11 +42,29 @@ var (
 )
 
 // ResolvePublicAddr queries a public STUN server to discover the local node's external WAN IP and UDP port.
+// If serverAddr is empty, it queries DefaultSTUNServers in order until one responds successfully.
 func ResolvePublicAddr(ctx context.Context, serverAddr string) (*net.UDPAddr, error) {
-	if serverAddr == "" {
-		serverAddr = DefaultSTUNServer
+	if serverAddr != "" {
+		return querySingleSTUN(ctx, serverAddr)
 	}
 
+	var lastErr error
+	for _, srv := range DefaultSTUNServers {
+		subCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		addr, err := querySingleSTUN(subCtx, srv)
+		cancel()
+		if err == nil && addr != nil {
+			return addr, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("stun: all fallback servers failed: %w", lastErr)
+	}
+	return nil, errors.New("stun: no STUN servers available")
+}
+
+func querySingleSTUN(ctx context.Context, serverAddr string) (*net.UDPAddr, error) {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "udp", serverAddr)
 	if err != nil {
