@@ -18,6 +18,7 @@ export function App() {
   const [isPlaylistsOpen, setIsPlaylistsOpen] = useState(false);
   const [playlistTrackTarget, setPlaylistTrackTarget] = useState<Track | null>(null);
   const [allKnownTracks, setAllKnownTracks] = useState<Track[]>([]);
+  const [catalogRefreshTrigger, setCatalogRefreshTrigger] = useState(0);
 
   const {
     currentTrack,
@@ -166,6 +167,7 @@ export function App() {
           onOpenPlaylists={() => setIsPlaylistsOpen(true)}
           playlistsCount={playlists.length}
           onTracksLoaded={handleTracksLoaded}
+          refreshTrigger={catalogRefreshTrigger}
         />
       </main>
 
@@ -231,6 +233,7 @@ export function App() {
       <ModerationModal
         isOpen={isModerationOpen}
         onClose={() => setIsModerationOpen(false)}
+        onDecisionApplied={() => setCatalogRefreshTrigger((prev) => prev + 1)}
       />
     </div>
   );
