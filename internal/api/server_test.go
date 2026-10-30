@@ -27,6 +27,9 @@ import (
 	"resonamesh/internal/updater"
 	"resonamesh/pkg/crypto"
 	"resonamesh/pkg/protocol"
+
+	"github.com/libp2p/go-libp2p/core/peer"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 )
 
 func setupTestServer(t *testing.T) (*httptest.Server, *catalog.Catalog, ed25519.PrivateKey) {
@@ -1625,5 +1628,121 @@ func TestTrackMetadataAndRecommendationsEndpoints(t *testing.T) {
 	}
 	if len(updateRes.Track.Tags) != 3 || updateRes.Track.Tags[0] != "piano" {
 		t.Fatalf("unexpected updated tags: %+v", updateRes.Track.Tags)
+	}
+}
+
+
+func generateTestAPIPeerID(t *testing.T) peer.ID {
+	t.Helper()
+	pub, _, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lp2pPub, err := libp2pcrypto.UnmarshalEd25519PublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := peer.IDFromPublicKey(lp2pPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pid
+}
+
+func TestServerPeerReputationEndpoints(t *testing.T) {
+	server, _ := createTestAPIServer(t)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	peerTracker := p2p.NewPeerTracker()
+	repTracker := p2p.NewPeerReputationTracker()
+	server.SetPeerTracker(peerTracker)
+	server.SetReputationTracker(repTracker)
+
+	// Record valid peer IDs in peerTracker
+	peerIDA := generateTestAPIPeerID(t)
+	peerIDB := generateTestAPIPeerID(t)
+
+	peerTracker.RecordPeer(peer.AddrInfo{
+		ID: peerIDA,
+	}, true)
+	peerTracker.RecordPeer(peer.AddrInfo{
+		ID: peerIDB,
+	}, true)
+
+	// Peer A has 5 verified blocks and 40ms latency
+	for i := 0; i < 5; i++ {
+		repTracker.RecordSuccess(peerIDA, 40*time.Millisecond, 256*1024)
+	}
+
+	// Peer B committed a hash mismatch -> quarantined
+	repTracker.RecordFailure(peerIDB, p2p.FailureHashMismatch)
+
+	// 1. Query /api/v1/peers
+	resp, err := http.Get(ts.URL + "/api/v1/peers")
+	if err != nil {
+		t.Fatalf("GET /api/v1/peers failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+	}
+
+	var peerData struct {
+		Peers []api.EnrichedPeerRecord `json:"peers"`
+		Total int                      `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&peerData); err != nil {
+		t.Fatalf("failed to decode peers JSON: %v", err)
+	}
+
+	if peerData.Total != 2 {
+		t.Fatalf("expected 2 peers, got %d", peerData.Total)
+	}
+
+	for _, p := range peerData.Peers {
+		if p.ID == peerIDA {
+			if p.Score <= 100.0 {
+				t.Fatalf("expected Peer A score > 100, got %f", p.Score)
+			}
+			if p.BlocksVerified != 5 {
+				t.Fatalf("expected 5 verified blocks for Peer A, got %d", p.BlocksVerified)
+			}
+			if p.IsQuarantined {
+				t.Fatalf("Peer A should not be quarantined")
+			}
+		}
+		if p.ID == peerIDB {
+			if !p.IsQuarantined {
+				t.Fatalf("Peer B must be quarantined")
+			}
+			if p.HashMismatches != 1 {
+				t.Fatalf("expected 1 hash mismatch for Peer B, got %d", p.HashMismatches)
+			}
+		}
+	}
+
+	// 2. Query /api/v1/network/reputation
+	repResp, err := http.Get(ts.URL + "/api/v1/network/reputation")
+	if err != nil {
+		t.Fatalf("GET /api/v1/network/reputation failed: %v", err)
+	}
+	defer repResp.Body.Close()
+
+	if repResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for reputation endpoint, got %d", repResp.StatusCode)
+	}
+
+	var repData struct {
+		Peers []map[string]interface{} `json:"peers"`
+		Total int                      `json:"total"`
+	}
+	if err := json.NewDecoder(repResp.Body).Decode(&repData); err != nil {
+		t.Fatalf("failed to decode reputation JSON: %v", err)
+	}
+
+	if repData.Total != 2 {
+		t.Fatalf("expected 2 tracked peers in reputation list, got %d", repData.Total)
 	}
 }

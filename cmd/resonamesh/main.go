@@ -427,6 +427,7 @@ func main() {
 	fetcher.SetQuotaManager(qm)
 	fetcher.SetBlockChecker(modEngine)
 	str.SetFetcher(fetcher)
+	apiServer.SetReputationTracker(fetcher.ReputationTracker())
 
 	// 11. Initialize Keeper background replication service
 	keeper := p2p.NewKeeper(p2p.KeeperConfig{
