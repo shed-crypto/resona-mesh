@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/json"
 	"context"
 	"database/sql"
 	"errors"
@@ -22,8 +23,12 @@ type Track struct {
 	Title           string  `json:"title"`
 	Artist          string  `json:"artist"`
 	Description     string  `json:"description"`
-	Lyrics          string  `json:"lyrics,omitempty"`
-	DurationMs      int64   `json:"duration_ms"`
+	Lyrics          string   `json:"lyrics,omitempty"`
+	Genre           string   `json:"genre,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
+	BPM             int      `json:"bpm,omitempty"`
+	Mood            string   `json:"mood,omitempty"`
+	DurationMs      int64    `json:"duration_ms"`
 	BitrateKbps     int     `json:"bitrate_kbps"`
 	TotalSizeBytes  int64   `json:"total_size_bytes"`
 	BlockSize       int     `json:"block_size"`
@@ -100,6 +105,7 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 				t.content_id, t.title, t.artist, t.description, t.lyrics, t.duration_ms, 
 				t.bitrate_kbps, t.total_size_bytes, t.block_size, t.block_count, 
 				t.publisher_key, t.published_at, t.license_code, t.signature, 
+				COALESCE(t.genre, ''), COALESCE(t.tags_json, '[]'), COALESCE(t.bpm, 0), COALESCE(t.mood, ''),
 				t.pinned, t.created_at,
 				(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks,
 				CASE WHEN bc.content_id IS NOT NULL THEN 1 ELSE 0 END AS is_blocked,
@@ -138,6 +144,7 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 				t.content_id, t.title, t.artist, t.description, t.lyrics, t.duration_ms, 
 				t.bitrate_kbps, t.total_size_bytes, t.block_size, t.block_count, 
 				t.publisher_key, t.published_at, t.license_code, t.signature, 
+				COALESCE(t.genre, ''), COALESCE(t.tags_json, '[]'), COALESCE(t.bpm, 0), COALESCE(t.mood, ''),
 				t.pinned, t.created_at,
 				(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks,
 				CASE WHEN bc.content_id IS NOT NULL THEN 1 ELSE 0 END AS is_blocked,
@@ -185,13 +192,18 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 	for rows.Next() {
 		var t Track
 		var pinnedInt, storedBlocks, isBlockedInt, hasCoverInt int
+		var tagsJSON string
 		err := rows.Scan(
 			&t.ContentID, &t.Title, &t.Artist, &t.Description, &t.Lyrics, &t.DurationMs,
 			&t.BitrateKbps, &t.TotalSizeBytes, &t.BlockSize, &t.BlockCount,
 			&t.PublisherKey, &t.PublishedAt, &t.LicenseCode, &t.Signature,
+			&t.Genre, &tagsJSON, &t.BPM, &t.Mood,
 			&pinnedInt, &t.CreatedAt, &storedBlocks,
 			&isBlockedInt, &t.BlockReason, &hasCoverInt,
 		)
+		if tagsJSON != "" && tagsJSON != "[]" {
+			_ = json.Unmarshal([]byte(tagsJSON), &t.Tags)
+		}
 		if err != nil {
 			return nil, 0, fmt.Errorf("catalog: failed to scan track: %w", err)
 		}
@@ -218,6 +230,7 @@ func (c *Catalog) GetTrack(ctx context.Context, contentID string) (*Track, error
 			t.content_id, t.title, t.artist, t.description, t.lyrics, t.duration_ms, 
 			t.bitrate_kbps, t.total_size_bytes, t.block_size, t.block_count, 
 			t.publisher_key, t.published_at, t.license_code, t.signature, 
+			COALESCE(t.genre, ''), COALESCE(t.tags_json, '[]'), COALESCE(t.bpm, 0), COALESCE(t.mood, ''),
 			t.pinned, t.created_at,
 			(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks,
 			CASE WHEN bc.content_id IS NOT NULL THEN 1 ELSE 0 END AS is_blocked,
@@ -230,13 +243,18 @@ func (c *Catalog) GetTrack(ctx context.Context, contentID string) (*Track, error
 
 	var t Track
 	var pinnedInt, storedBlocks, isBlockedInt, hasCoverInt int
+	var tagsJSON string
 	err := c.db.Raw().QueryRowContext(ctx, query, contentID).Scan(
 		&t.ContentID, &t.Title, &t.Artist, &t.Description, &t.Lyrics, &t.DurationMs,
 		&t.BitrateKbps, &t.TotalSizeBytes, &t.BlockSize, &t.BlockCount,
 		&t.PublisherKey, &t.PublishedAt, &t.LicenseCode, &t.Signature,
+		&t.Genre, &tagsJSON, &t.BPM, &t.Mood,
 		&pinnedInt, &t.CreatedAt, &storedBlocks,
 		&isBlockedInt, &t.BlockReason, &hasCoverInt,
 	)
+	if tagsJSON != "" && tagsJSON != "[]" {
+		_ = json.Unmarshal([]byte(tagsJSON), &t.Tags)
+	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrTrackNotFound
@@ -333,12 +351,19 @@ func (c *Catalog) RegisterRemoteManifest(ctx context.Context, m *protocol.Manife
 	}
 	defer tx.Rollback()
 
+	tagsJSON := "[]"
+	if len(m.Tags) > 0 {
+		if b, err := json.Marshal(m.Tags); err == nil {
+			tagsJSON = string(b)
+		}
+	}
+
 	insertTrackSQL := `
 	INSERT INTO tracks (
 		content_id, title, artist, description, lyrics, duration_ms, bitrate_kbps,
 		total_size_bytes, block_size, block_count, publisher_key, published_at,
-		license_code, signature, pinned, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+		license_code, signature, genre, tags_json, bpm, mood, pinned, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
 
 	_, err = tx.ExecContext(ctx, insertTrackSQL,
 		m.ContentID,
@@ -355,6 +380,10 @@ func (c *Catalog) RegisterRemoteManifest(ctx context.Context, m *protocol.Manife
 		m.PublishedAt,
 		m.LicenseCode,
 		m.Signature,
+		m.Genre,
+		tagsJSON,
+		m.BPM,
+		m.Mood,
 		now,
 	)
 	if err != nil {
@@ -505,6 +534,29 @@ func (c *Catalog) UpdateTrackLyrics(ctx context.Context, contentID string, lyric
 	res, err := c.db.Raw().ExecContext(ctx, query, lyrics, contentID)
 	if err != nil {
 		return fmt.Errorf("catalog: failed to update track lyrics: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrTrackNotFound
+	}
+	return nil
+}
+
+// UpdateTrackMetadata updates musical metadata tags for an existing track.
+func (c *Catalog) UpdateTrackMetadata(ctx context.Context, contentID string, genre string, tags []string, bpm int, mood string) error {
+	tagsJSON := "[]"
+	if len(tags) > 0 {
+		if b, err := json.Marshal(tags); err == nil {
+			tagsJSON = string(b)
+		}
+	}
+	query := "UPDATE tracks SET genre = ?, tags_json = ?, bpm = ?, mood = ? WHERE content_id = ?"
+	res, err := c.db.Raw().ExecContext(ctx, query, strings.TrimSpace(genre), tagsJSON, bpm, strings.TrimSpace(mood), contentID)
+	if err != nil {
+		return fmt.Errorf("catalog: failed to update track metadata: %w", err)
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
