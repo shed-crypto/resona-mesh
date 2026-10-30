@@ -91,7 +91,7 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
         maxWidth: 'calc(100vw - 48px)',
         height: '520px',
         maxHeight: 'calc(100vh - 120px)',
-        backgroundColor: 'rgba(16, 19, 26, 0.96)',
+        backgroundColor: 'rgba(26, 26, 29, 0.98)',
         backdropFilter: 'blur(24px)',
         border: '1px solid var(--border-active)',
         borderRadius: 'var(--radius-lg)',
@@ -119,11 +119,11 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
               width: '32px',
               height: '32px',
               borderRadius: 'var(--radius-md)',
-              backgroundColor: 'rgba(16, 185, 129, 0.15)',
+              backgroundColor: 'rgba(249, 115, 22, 0.15)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--accent-emerald)',
+              color: 'var(--accent-primary)',
               flexShrink: 0,
             }}
           >
@@ -165,10 +165,10 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
               setSaveError(null);
             }}
             style={{
-              background: isEditing ? 'rgba(16, 185, 129, 0.15)' : 'none',
+              background: isEditing ? 'rgba(249, 115, 22, 0.15)' : 'none',
               border: isEditing ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
               borderRadius: 'var(--radius-sm)',
-              color: isEditing ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              color: isEditing ? 'var(--accent-primary)' : 'var(--text-muted)',
               cursor: 'pointer',
               padding: '6px 10px',
               fontSize: '0.75rem',
@@ -275,7 +275,7 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
               onClick={handleSaveLyrics}
               disabled={isSaving}
               style={{
-                backgroundColor: 'var(--accent-emerald)',
+                backgroundColor: 'var(--accent-primary)',
                 border: 'none',
                 borderRadius: 'var(--radius-sm)',
                 color: '#000',
@@ -332,10 +332,10 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
           <button
             onClick={() => setIsEditing(true)}
             style={{
-              backgroundColor: 'rgba(16, 185, 129, 0.15)',
+              backgroundColor: 'rgba(249, 115, 22, 0.15)',
               border: '1px solid var(--accent-emerald)',
               borderRadius: 'var(--radius-sm)',
-              color: 'var(--accent-emerald)',
+              color: 'var(--accent-primary)',
               fontWeight: 500,
               padding: '8px 16px',
               fontSize: '0.8rem',
@@ -378,16 +378,16 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
                   borderRadius: 'var(--radius-md)',
                   cursor: 'pointer',
                   transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
-                  backgroundColor: isActive ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
+                  backgroundColor: isActive ? 'rgba(249, 115, 22, 0.12)' : 'transparent',
                   borderLeft: isActive ? '3px solid var(--accent-emerald)' : '3px solid transparent',
                   color: isActive
-                    ? 'var(--accent-emerald)'
+                    ? 'var(--accent-primary)'
                     : isPast
                     ? 'rgba(255, 255, 255, 0.4)'
                     : 'rgba(255, 255, 255, 0.85)',
                   fontSize: isActive ? '1.08rem' : '0.88rem',
                   fontWeight: isActive ? 600 : 400,
-                  textShadow: isActive ? '0 0 16px rgba(16, 185, 129, 0.35)' : 'none',
+                  textShadow: 'none',
                   transform: isActive ? 'scale(1.02)' : 'none',
                   userSelect: 'none',
                 }}
