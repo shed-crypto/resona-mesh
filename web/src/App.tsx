@@ -107,13 +107,12 @@ export function App() {
               width: '36px',
               height: '36px',
               borderRadius: 'var(--radius-md)',
-              backgroundColor: 'var(--bg-card)',
-              border: '1px solid var(--accent-emerald)',
+              backgroundColor: 'rgba(249, 115, 22, 0.12)',
+              border: '1px solid rgba(249, 115, 22, 0.25)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--accent-emerald)',
-              boxShadow: '0 0 12px rgba(16, 185, 129, 0.25)',
+              color: 'var(--accent-primary)',
             }}
           >
             <Waves size={20} />
@@ -122,8 +121,8 @@ export function App() {
             <h1 style={{ fontSize: '1.15rem', fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
               ResonaMesh
             </h1>
-            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-              DECENTRALIZED AUDIO PROTOCOL
+            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+              Decentralized Hi-Fi Audio
             </p>
           </div>
         </div>
@@ -133,7 +132,7 @@ export function App() {
             variant="ghost"
             size="sm"
             onClick={() => setIsPlaylistsOpen(true)}
-            icon={<ListMusic size={15} style={{ color: 'var(--accent-emerald)' }} />}
+            icon={<ListMusic size={15} style={{ color: 'var(--accent-primary)' }} />}
           >
             Playlists ({playlists.length})
           </Button>
