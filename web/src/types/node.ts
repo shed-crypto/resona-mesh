@@ -4,6 +4,8 @@ export interface PeerRecord {
   first_seen: string;
   last_seen: string;
   connected: boolean;
+  discovered_via?: string;
+  connection_type?: 'direct' | 'relayed' | 'known';
   reputation_score?: number;
   blocks_verified?: number;
   hash_mismatches?: number;
