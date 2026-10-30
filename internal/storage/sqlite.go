@@ -79,35 +79,44 @@ func (d *DB) migrate() error {
 	}
 
 	// Idempotent column check for existing databases
-	if err := d.ensureLyricsColumn(); err != nil {
+	if err := d.ensureMetadataColumns(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (d *DB) ensureLyricsColumn() error {
+func (d *DB) ensureMetadataColumns() error {
 	rows, err := d.db.Query("PRAGMA table_info(tracks)")
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 
-	hasLyrics := false
+	cols := make(map[string]bool)
 	for rows.Next() {
 		var cid int
 		var name, ctype string
 		var notnull, pk int
 		var dfltValue any
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err == nil {
-			if name == "lyrics" {
-				hasLyrics = true
-				break
-			}
+			cols[name] = true
 		}
 	}
-	if !hasLyrics {
+	if !cols["lyrics"] {
 		_, _ = d.db.Exec("ALTER TABLE tracks ADD COLUMN lyrics TEXT NOT NULL DEFAULT ''")
+	}
+	if !cols["genre"] {
+		_, _ = d.db.Exec("ALTER TABLE tracks ADD COLUMN genre TEXT NOT NULL DEFAULT ''")
+	}
+	if !cols["tags_json"] {
+		_, _ = d.db.Exec("ALTER TABLE tracks ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'")
+	}
+	if !cols["bpm"] {
+		_, _ = d.db.Exec("ALTER TABLE tracks ADD COLUMN bpm INTEGER NOT NULL DEFAULT 0")
+	}
+	if !cols["mood"] {
+		_, _ = d.db.Exec("ALTER TABLE tracks ADD COLUMN mood TEXT NOT NULL DEFAULT ''")
 	}
 	return nil
 }

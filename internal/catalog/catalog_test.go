@@ -513,3 +513,76 @@ func TestCatalogTrackLyrics(t *testing.T) {
 		t.Fatalf("expected ErrTrackNotFound, got %v", err)
 	}
 }
+
+func TestCatalogTrackMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	db, err := storage.Open(filepath.Join(tmpDir, "test.db"))
+	if err != nil {
+		t.Fatalf("failed to init test db: %v", err)
+	}
+	defer db.Close()
+
+	bs, err := storage.NewBlockStore(filepath.Join(tmpDir, "blocks"))
+	if err != nil {
+		t.Fatalf("failed to init block store: %v", err)
+	}
+
+	cat := catalog.New(db, bs)
+	imp := importer.NewImporter(bs, db)
+	ctx := context.Background()
+
+	_, privKey, _ := crypto.GenerateKeyPair()
+	audioData := make([]byte, 1024)
+
+	m, err := imp.Import(ctx, importer.ImportParams{
+		Title:        "Nordic Aurora",
+		Artist:       "Fjord Harmonic",
+		DurationMs:   180000,
+		BitrateKbps:  320,
+		LicenseCode:  protocol.LicenseCC0,
+		PublisherKey: privKey,
+		AudioData:    bytes.NewReader(audioData),
+		Genre:        "Ambient",
+		Tags:         []string{"ambient", "nordic", "chill"},
+		BPM:          95,
+		Mood:         "Calm",
+	})
+	if err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+
+	// 1. Verify initial metadata
+	track, err := cat.GetTrack(ctx, m.ContentID)
+	if err != nil {
+		t.Fatalf("GetTrack failed: %v", err)
+	}
+	if track.Genre != "Ambient" {
+		t.Errorf("expected genre Ambient, got %q", track.Genre)
+	}
+	if len(track.Tags) != 3 || track.Tags[0] != "ambient" {
+		t.Errorf("expected tags [ambient nordic chill], got %+v", track.Tags)
+	}
+	if track.BPM != 95 {
+		t.Errorf("expected BPM 95, got %d", track.BPM)
+	}
+	if track.Mood != "Calm" {
+		t.Errorf("expected mood Calm, got %q", track.Mood)
+	}
+
+	// 2. Update metadata
+	newTags := []string{"ambient", "electronic", "relax"}
+	if err := cat.UpdateTrackMetadata(ctx, m.ContentID, "Electronic", newTags, 100, "Reflective"); err != nil {
+		t.Fatalf("UpdateTrackMetadata failed: %v", err)
+	}
+
+	updated, err := cat.GetTrack(ctx, m.ContentID)
+	if err != nil {
+		t.Fatalf("GetTrack after update failed: %v", err)
+	}
+	if updated.Genre != "Electronic" || updated.BPM != 100 || updated.Mood != "Reflective" {
+		t.Errorf("metadata mismatch after update: %+v", updated)
+	}
+	if len(updated.Tags) != 3 || updated.Tags[1] != "electronic" {
+		t.Errorf("tags mismatch after update: %+v", updated.Tags)
+	}
+}

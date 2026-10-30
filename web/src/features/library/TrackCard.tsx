@@ -160,6 +160,37 @@ export const TrackCard: React.FC<TrackCardProps> = ({
 
       {/* Audio Quality & Duration Metadata */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+        {track.genre && (
+          <span
+            style={{
+              fontSize: '0.68rem',
+              padding: '2px 6px',
+              borderRadius: '4px',
+              backgroundColor: 'rgba(249, 115, 22, 0.08)',
+              border: '1px solid rgba(249, 115, 22, 0.25)',
+              color: 'var(--accent-primary)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {track.genre}
+          </span>
+        )}
+        {track.bpm && track.bpm > 0 ? (
+          <span
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.68rem',
+              padding: '2px 6px',
+              borderRadius: '4px',
+              backgroundColor: 'rgba(255, 255, 255, 0.04)',
+              border: '1px solid var(--border-glass)',
+              color: 'var(--text-muted)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {track.bpm} BPM
+          </span>
+        ) : null}
         <span
           style={{
             fontFamily: 'var(--font-mono)',
