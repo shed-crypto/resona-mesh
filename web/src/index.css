@@ -89,3 +89,10 @@ input, textarea, select {
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }
+
+/* Responsive Player Bar Tool Labels */
+@media (max-width: 1320px) {
+  .player-btn-label {
+    display: none !important;
+  }
+}
