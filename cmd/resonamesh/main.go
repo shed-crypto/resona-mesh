@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -49,11 +50,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(cfg.BootstrapSeeds) == 0 && DefaultBootstrapSeeds != "" {
-		for _, s := range strings.Split(DefaultBootstrapSeeds, ",") {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				cfg.BootstrapSeeds = append(cfg.BootstrapSeeds, s)
+	// Resolve bootstrap seeds if not explicitly provided via CLI or .env
+	if len(cfg.BootstrapSeeds) == 0 {
+		// 1. Try local bootstrap.local.json file if present on disk
+		if data, err := os.ReadFile("bootstrap.local.json"); err == nil {
+			var localSeeds []string
+			if err := json.Unmarshal(data, &localSeeds); err == nil && len(localSeeds) > 0 {
+				cfg.BootstrapSeeds = localSeeds
+			}
+		}
+
+		// 2. Fall back to embedded compile-time seeds (-ldflags -X main.DefaultBootstrapSeeds=...)
+		if len(cfg.BootstrapSeeds) == 0 && DefaultBootstrapSeeds != "" {
+			for _, s := range strings.Split(DefaultBootstrapSeeds, ",") {
+				s = strings.TrimSpace(s)
+				if s != "" {
+					cfg.BootstrapSeeds = append(cfg.BootstrapSeeds, s)
+				}
 			}
 		}
 	}
