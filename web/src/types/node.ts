@@ -4,6 +4,13 @@ export interface PeerRecord {
   first_seen: string;
   last_seen: string;
   connected: boolean;
+  reputation_score?: number;
+  blocks_verified?: number;
+  hash_mismatches?: number;
+  stream_errors?: number;
+  avg_latency_ms?: number;
+  is_quarantined?: boolean;
+  quarantined_until?: string;
 }
 
 export interface NodeStatus {
