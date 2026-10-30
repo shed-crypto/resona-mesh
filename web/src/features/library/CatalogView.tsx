@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Disc3, RefreshCw, AlertCircle, ListMusic } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Disc3, RefreshCw, AlertCircle, ListMusic, Loader2 } from 'lucide-react';
 import type { Track } from '../../types/track';
 import { useCatalog } from '../../shared/hooks/useCatalog';
 import { useRecommendations } from '../../shared/hooks/useRecommendations';
@@ -39,6 +39,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     tracks,
     total,
     loading,
+    loadingMore,
+    hasMore,
+    fetchMoreTracks,
     error,
     search,
     setSearch,
@@ -51,12 +54,35 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
 
   const [isImportOpen, setIsImportOpen] = useState(false);
   const { recommendedTracks, topArtists } = useRecommendations(tracks);
+  const observerTarget = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!hasMore || loadingMore || loading) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          fetchMoreTracks();
+        }
+      },
+      { root: null, rootMargin: '300px', threshold: 0.1 }
+    );
+
+    const currentEl = observerTarget.current;
+    if (currentEl) {
+      observer.observe(currentEl);
+    }
+
+    return () => {
+      if (currentEl) observer.unobserve(currentEl);
+    };
+  }, [hasMore, loadingMore, loading, fetchMoreTracks]);
 
   useEffect(() => {
     if (refreshTrigger !== undefined && refreshTrigger > 0) {
       refresh();
     }
-  }, [refreshTrigger]);
+  }, [refreshTrigger, refresh]);
 
   useEffect(() => {
     if (tracks.length > 0) {
@@ -88,7 +114,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             <Button
               variant="secondary"
               size="md"
-              icon={<ListMusic size={15} style={{ color: 'var(--accent-emerald)' }} />}
+              icon={<ListMusic size={15} style={{ color: 'var(--accent-primary)' }} />}
               onClick={onOpenPlaylists}
             >
               Playlists ({playlistsCount})
@@ -227,24 +253,43 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {tracks.map((track) => (
-            <TrackCard
-              key={track.content_id}
-              track={track}
-              isActiveTrack={currentTrack?.content_id === track.content_id}
-              isPlaying={isPlaying}
-              onPlay={() => {
-                if (currentTrack?.content_id === track.content_id && onTogglePlay) {
-                  onTogglePlay();
-                } else {
-                  onPlayTrack(track);
-                }
-              }}
-              onTogglePin={() => togglePin(track.content_id, track.pinned)}
-              onDelete={() => deleteTrack(track.content_id)}
-              onReport={() => onReportTrack?.(track)}
-              onAddToPlaylist={() => onAddToPlaylist?.(track)}
-            />
-          ))}
+              <TrackCard
+                key={track.content_id}
+                track={track}
+                isActiveTrack={currentTrack?.content_id === track.content_id}
+                isPlaying={isPlaying}
+                onPlay={() => {
+                  if (currentTrack?.content_id === track.content_id && onTogglePlay) {
+                    onTogglePlay();
+                  } else {
+                    onPlayTrack(track);
+                  }
+                }}
+                onTogglePin={() => togglePin(track.content_id, track.pinned)}
+                onDelete={() => deleteTrack(track.content_id)}
+                onReport={() => onReportTrack?.(track)}
+                onAddToPlaylist={() => onAddToPlaylist?.(track)}
+              />
+            ))}
+          </div>
+
+          {/* Infinite Scroll Sentinel */}
+          <div
+            ref={observerTarget}
+            style={{
+              height: '40px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginTop: '8px',
+            }}
+          >
+            {loadingMore && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                <span>Loading more tracks...</span>
+              </div>
+            )}
           </div>
         </div>
       )}
