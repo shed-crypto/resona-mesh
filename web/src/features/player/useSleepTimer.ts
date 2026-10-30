@@ -12,13 +12,19 @@ export function useSleepTimer(
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
 
   const nominalVolumeRef = useRef(nominalVolume);
-  nominalVolumeRef.current = nominalVolume;
+  useEffect(() => {
+    nominalVolumeRef.current = nominalVolume;
+  }, [nominalVolume]);
 
   const isMutedRef = useRef(isMuted);
-  isMutedRef.current = isMuted;
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
 
   const timerOptionRef = useRef(timerOption);
-  timerOptionRef.current = timerOption;
+  useEffect(() => {
+    timerOptionRef.current = timerOption;
+  }, [timerOption]);
 
   // Set timer option
   const startTimer = useCallback(
@@ -37,9 +43,11 @@ export function useSleepTimer(
     [audioElement]
   );
 
+  const hasActiveCountdown = timerOption > 0 && remainingSeconds !== null;
+
   // Countdown timer ticker
   useEffect(() => {
-    if (timerOption <= 0 || remainingSeconds === null) return;
+    if (!hasActiveCountdown) return;
 
     const interval = setInterval(() => {
       setRemainingSeconds((prev) => {
@@ -68,7 +76,7 @@ export function useSleepTimer(
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [timerOption, remainingSeconds !== null, audioElement, onPause]);
+  }, [hasActiveCountdown, audioElement, onPause]);
 
   // Handle 'End of Track' option
   useEffect(() => {

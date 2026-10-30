@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Play,
   Pause,
@@ -15,11 +15,13 @@ import {
   Sliders,
   Gauge,
   Timer,
+  Maximize2,
 } from 'lucide-react';
 import type { Track } from '../../types/track';
 import type { PlayerState } from '../../shared/hooks/useAudioPlayer';
 import { LyricsDrawer } from './LyricsDrawer';
 import { EqualizerDrawer } from './EqualizerDrawer';
+import { FullscreenPlayerModal } from './FullscreenPlayerModal';
 import { useAudioEqualizer } from './useAudioEqualizer';
 import { useSleepTimer, type SleepTimerOption } from './useSleepTimer';
 import { WaveformScrubber } from './WaveformScrubber';
@@ -87,6 +89,7 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isEqOpen, setIsEqOpen] = useState(false);
   const [isRateMenuOpen, setIsRateMenuOpen] = useState(false);
   const [isSleepMenuOpen, setIsSleepMenuOpen] = useState(false);
+  const [isFullscreenOpen, setIsFullscreenOpen] = useState(false);
   const eq = useAudioEqualizer(audioElement ?? null);
   const sleepTimer = useSleepTimer(
     audioElement ?? null,
@@ -98,6 +101,19 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
       }
     }
   );
+
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
+      if (e.key === 'f' || e.key === 'F') {
+        setIsFullscreenOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   if (!currentTrack) {
     return null;
@@ -132,6 +148,47 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
         onSelectPreset={eq.selectPreset}
         onToggleBypass={eq.toggleBypass}
         onResetFlat={eq.resetFlat}
+      />
+
+      {/* Fullscreen Studio Modal */}
+      <FullscreenPlayerModal
+        isOpen={isFullscreenOpen}
+        onClose={() => setIsFullscreenOpen(false)}
+        currentTrack={currentTrack}
+        playerState={playerState}
+        currentTime={currentTime}
+        duration={duration}
+        bufferedPct={bufferedPct}
+        volume={volume}
+        isMuted={isMuted}
+        onTogglePlay={onTogglePlay}
+        onSeek={onSeek}
+        onVolumeChange={onVolumeChange}
+        onToggleMute={onToggleMute}
+        playbackRate={playbackRate}
+        onPlaybackRateChange={onPlaybackRateChange}
+        sleepTimerOption={sleepTimer.timerOption}
+        sleepRemainingFormatted={sleepTimer.formattedRemaining}
+        onStartSleepTimer={sleepTimer.startTimer}
+        queue={queue}
+        queueIndex={queueIndex}
+        isShuffle={isShuffle}
+        isRepeat={isRepeat}
+        onPlayNext={onPlayNext}
+        onPlayPrevious={onPlayPrevious}
+        onToggleShuffle={onToggleShuffle}
+        onToggleRepeat={onToggleRepeat}
+        onSelectQueueTrack={onSelectQueueTrack}
+        analyser={eq.analyser}
+        equalizerProps={{
+          isEnabled: eq.isEnabled,
+          preset: eq.preset,
+          gains: eq.gains,
+          onBandGainChange: eq.setBandGain,
+          onSelectPreset: eq.selectPreset,
+          onToggleBypass: eq.toggleBypass,
+          onResetFlat: eq.resetFlat,
+        }}
       />
 
       {/* Floating Playback Queue Drawer */}
@@ -756,6 +813,33 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
           >
             <Download size={16} />
           </a>
+
+          {/* Fullscreen Studio Toggle */}
+          <button
+            onClick={() => setIsFullscreenOpen(true)}
+            style={{
+              background: 'none',
+              border: '1px solid var(--border-glass)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: '6px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              transition: 'all 0.15s ease',
+            }}
+            title="Open Studio Mode (F)"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = 'var(--accent-emerald)';
+              e.currentTarget.style.borderColor = 'var(--accent-emerald)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'var(--text-muted)';
+              e.currentTarget.style.borderColor = 'var(--border-glass)';
+            }}
+          >
+            <Maximize2 size={16} />
+          </button>
 
           <VolumeControl
             volume={volume}
