@@ -430,6 +430,7 @@ Modern music platforms (such as YouTube Music) provide real-time synchronized ly
 
 ## 6. Priority 4: Milestone 13 — Decentralized Swarm Reputation & Peer Quarantine
 
+> **Status**: Implemented & Verified in `feature/swarm-reputation`, merged to `develop`
 > **Target Branch**: `feature/swarm-reputation`
 
 ### 6.1 Exact Code Implementation Specification

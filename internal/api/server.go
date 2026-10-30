@@ -53,6 +53,7 @@ type Server struct {
 	moderatorKey     ed25519.PrivateKey
 	updaterEngine    *updater.Engine
 	releaseHandler   *p2p.ReleaseHandler
+	reputationTracker *p2p.PeerReputationTracker
 	publisherKey     ed25519.PrivateKey
 	startTime        time.Time
 	mux              *http.ServeMux
@@ -148,6 +149,11 @@ func (s *Server) SetReleaseHandler(rh *p2p.ReleaseHandler) {
 	s.releaseHandler = rh
 }
 
+// SetReputationTracker binds the P2P peer reputation tracker.
+func (s *Server) SetReputationTracker(rt *p2p.PeerReputationTracker) {
+	s.reputationTracker = rt
+}
+
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tracks", s.handleListTracks)
@@ -170,6 +176,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/peers", s.handleListPeers)
 	s.mux.HandleFunc("POST /api/v1/peers/connect", s.handleConnectPeer)
 	s.mux.HandleFunc("POST /api/v1/peers/sync", s.handleSyncPeers)
+	s.mux.HandleFunc("GET /api/v1/network/reputation", s.handleGetReputation)
 	s.mux.HandleFunc("GET /api/v1/storage", s.handleGetStorage)
 	s.mux.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	s.mux.HandleFunc("PUT /api/v1/settings", s.handleUpdateSettings)
@@ -728,20 +735,88 @@ func SanitizeFilename(name string) string {
 	return cleaned
 }
 
-// handleListPeers returns active P2P swarm peers discovered or connected.
+// EnrichedPeerRecord wraps runtime peer discovery state with empirical reputation metrics.
+type EnrichedPeerRecord struct {
+	p2p.PeerRecord
+	Score            float64 `json:"reputation_score"`
+	BlocksVerified   int64   `json:"blocks_verified"`
+	HashMismatches   int64   `json:"hash_mismatches"`
+	StreamErrors     int64   `json:"stream_errors"`
+	AvgLatencyMs     float64 `json:"avg_latency_ms"`
+	IsQuarantined    bool    `json:"is_quarantined"`
+	QuarantinedUntil string  `json:"quarantined_until,omitempty"`
+}
+
+// handleListPeers returns active P2P swarm peers discovered or connected, enriched with reputation state.
 func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
 	if s.peerTracker == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"peers": []p2p.PeerRecord{},
+			"peers": []EnrichedPeerRecord{},
 			"total": 0,
 		})
 		return
 	}
 
-	peers := s.peerTracker.Peers()
+	rawPeers := s.peerTracker.Peers()
+	now := time.Now()
+	enriched := make([]EnrichedPeerRecord, 0, len(rawPeers))
+	for _, p := range rawPeers {
+		ep := EnrichedPeerRecord{
+			PeerRecord: p,
+			Score:      100.0,
+		}
+		if s.reputationTracker != nil {
+			ep.Score = s.reputationTracker.Score(p.ID)
+			ep.IsQuarantined = s.reputationTracker.IsQuarantined(p.ID, now)
+			if stats, ok := s.reputationTracker.GetStats(p.ID); ok {
+				ep.BlocksVerified = stats.BlocksVerified
+				ep.HashMismatches = stats.HashMismatchCount
+				ep.StreamErrors = stats.StreamErrors
+				ep.AvgLatencyMs = stats.AvgLatencyMs
+				if ep.IsQuarantined {
+					ep.QuarantinedUntil = stats.QuarantinedUntil.Format(time.RFC3339)
+				}
+			}
+		}
+		enriched = append(enriched, ep)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"peers": peers,
-		"total": len(peers),
+		"peers": enriched,
+		"total": len(enriched),
+	})
+}
+
+// handleGetReputation returns reputation and quarantine telemetry across all peers.
+func (s *Server) handleGetReputation(w http.ResponseWriter, r *http.Request) {
+	if s.reputationTracker == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"peers": []interface{}{},
+			"total": 0,
+		})
+		return
+	}
+
+	stats := s.reputationTracker.AllStats()
+	now := time.Now()
+	type peerRepEntry struct {
+		p2p.PeerTransferStats
+		Score         float64 `json:"score"`
+		IsQuarantined bool    `json:"is_quarantined"`
+	}
+
+	entries := make([]peerRepEntry, 0, len(stats))
+	for _, st := range stats {
+		entries = append(entries, peerRepEntry{
+			PeerTransferStats: st,
+			Score:             s.reputationTracker.Score(st.PeerID),
+			IsQuarantined:     s.reputationTracker.IsQuarantined(st.PeerID, now),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"peers": entries,
+		"total": len(entries),
 	})
 }
 
