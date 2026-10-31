@@ -163,12 +163,19 @@ func main() {
 	// 5. Initialize HTTP REST & streaming server
 	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
 
-	// 6. Initialize P2P Host and Swarm engine
+	// 6. Initialize P2P Host and Swarm engine (Dual-Stack IPv4 + IPv6 for direct mobile bypass)
 	hostConfig := p2p.HostConfig{
 		PrivateKey:         privKey,
 		DisableRelay:       cfg.DisableRelay,
 		EnableRelayService: cfg.Headless && !cfg.DisableRelay,
 		EnableNATPortMap:   cfg.NATPortMapEnabled,
+	}
+
+	baseListenAddrs := []string{
+		fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
+		fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.P2PPort),
+		fmt.Sprintf("/ip6/::/tcp/%d", cfg.P2PPort),
+		fmt.Sprintf("/ip6/::/udp/%d/quic-v1", cfg.P2PPort),
 	}
 
 	if cfg.Headless {
@@ -177,23 +184,13 @@ func main() {
 		// HTTP browser requests (Status Dashboard) to the apiServer HTTP handler.
 		h, portStr, err := net.SplitHostPort(cfg.HTTPAddr)
 		if err == nil {
-			hostConfig.ListenAddrs = []string{
-				fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
-				fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.P2PPort),
-				fmt.Sprintf("/ip4/%s/tcp/%s/ws", h, portStr),
-			}
+			hostConfig.ListenAddrs = append(baseListenAddrs, fmt.Sprintf("/ip4/%s/tcp/%s/ws", h, portStr))
 			hostConfig.HTTPHandler = apiServer.Handler()
 		} else {
-			hostConfig.ListenAddrs = []string{
-				fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
-				fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.P2PPort),
-			}
+			hostConfig.ListenAddrs = baseListenAddrs
 		}
 	} else {
-		hostConfig.ListenAddrs = []string{
-			fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.P2PPort),
-			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.P2PPort),
-		}
+		hostConfig.ListenAddrs = baseListenAddrs
 	}
 
 	p2pHost, err := p2p.NewHost(hostConfig)
@@ -257,26 +254,22 @@ func main() {
 		}()
 	}
 
-	// Trigger Google STUN resolution to discover public reflexive WAN endpoint
+	// Probe STUN over the shared QUIC UDP socket prior to bootstrap so the first Identify
+	// handshake advertises the true external NAT-mapped UDP port and starts keepalive pinholing.
 	if !cfg.Headless {
-		go func() {
-			stunCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-			defer cancel()
-			if udpAddr, err := p2p.ResolvePublicAddr(stunCtx, ""); err == nil && udpAddr != nil {
-				slog.Info("Resolved public WAN reflexive address via STUN",
-					"public_ip", udpAddr.IP.String(),
-					"public_udp_port", udpAddr.Port,
-				)
-				if quicMA, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/udp/%d/quic-v1", udpAddr.IP.String(), cfg.P2PPort)); err == nil {
-					p2pHost.AddAdvertisedAddr(quicMA)
-				}
-				if tcpMA, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", udpAddr.IP.String(), cfg.P2PPort)); err == nil {
-					p2pHost.AddAdvertisedAddr(tcpMA)
-				}
-			} else {
-				slog.Debug("Google STUN resolution notice", "error", err)
-			}
-		}()
+		stunCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+		if diag, err := p2pHost.ProbeAndAdvertiseNAT(stunCtx, nil); err == nil && diag != nil {
+			slog.Info("Resolved public WAN endpoint on shared QUIC socket via STUN",
+				"public_ip", diag.PublicIP.String(),
+				"primary_udp_port", diag.PrimaryPort,
+				"nat_type", string(diag.NATType),
+				"candidate_ports", diag.CandidatePorts,
+			)
+		} else {
+			slog.Debug("Initial STUN probe notice", "error", err)
+		}
+		cancel()
+		p2pHost.StartSTUNKeepAlive(ctx, nil, 25*time.Second)
 	}
 
 	// Register universal swarm network connection listener
@@ -473,4 +466,3 @@ type catalogBlockProvider struct {
 func (p *catalogBlockProvider) GetBlock(_ context.Context, _ string, _ int, blockHash string) ([]byte, error) {
 	return p.bs.Get(blockHash)
 }
-

@@ -154,7 +154,7 @@ func RequestBlock(
 		return nil, ErrEmptyBlockExpected
 	}
 
-	s, err := h.Raw().NewStream(ctx, peerID, protocol.ProtocolBlock)
+	s, err := h.NewDataStreamPreferDirect(ctx, peerID, DefaultDirectUpgradeWait, protocol.ProtocolBlock)
 	if err != nil {
 		return nil, fmt.Errorf("p2p: failed to open block stream to %s: %w", peerID, err)
 	}

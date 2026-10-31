@@ -196,7 +196,7 @@ func (mh *ModerationHandler) writeResponse(s network.Stream, resp ModerationWire
 
 // SendReport sends a report to a remote peer and returns any receipt.
 func (mh *ModerationHandler) SendReport(ctx context.Context, peerID peer.ID, report *protocol.ReportEvent) (*protocol.ReceiptEvent, error) {
-	s, err := mh.host.Raw().NewStream(ctx, peerID, protocol.ProtocolModeration)
+	s, err := mh.host.NewControlStream(ctx, peerID, protocol.ProtocolModeration)
 	if err != nil {
 		return nil, fmt.Errorf("p2p: failed to open moderation stream to %s: %w", peerID, err)
 	}
@@ -244,7 +244,7 @@ func (mh *ModerationHandler) SendReport(ctx context.Context, peerID peer.ID, rep
 
 // SyncDecisions pulls newer decisions from a remote peer starting from sinceSeq.
 func (mh *ModerationHandler) SyncDecisions(ctx context.Context, peerID peer.ID, sinceSeq uint64) ([]*protocol.DecisionEvent, error) {
-	s, err := mh.host.Raw().NewStream(ctx, peerID, protocol.ProtocolModeration)
+	s, err := mh.host.NewControlStream(ctx, peerID, protocol.ProtocolModeration)
 	if err != nil {
 		return nil, fmt.Errorf("p2p: failed to open moderation stream to %s: %w", peerID, err)
 	}
