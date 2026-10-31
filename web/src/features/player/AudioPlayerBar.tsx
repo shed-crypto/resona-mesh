@@ -17,6 +17,7 @@ import { WaveformScrubber } from './WaveformScrubber';
 import { VolumeControl } from './VolumeControl';
 import { Badge } from '../../shared/components/Badge';
 import { generateCoverDataUri } from '../../shared/utils/artwork';
+import { apiClient } from '../../shared/api/client';
 
 interface AudioPlayerBarProps {
   currentTrack: Track | null;
@@ -76,7 +77,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   const isPlaying = playerState === 'playing';
   const isStalled = playerState === 'stalled';
 
-  const coverArtUri = generateCoverDataUri(currentTrack.content_id, currentTrack.title);
+  const fallbackCoverUri = generateCoverDataUri(currentTrack.content_id, currentTrack.title);
+  const coverArtUri = currentTrack.has_cover ? apiClient.getCoverUrl(currentTrack.content_id) : fallbackCoverUri;
 
   return (
     <>
@@ -152,7 +154,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             ) : (
               queue.map((t, idx) => {
                 const isCurrent = idx === queueIndex;
-                const trackCover = generateCoverDataUri(t.content_id, t.title);
+                const fallbackTrackCover = generateCoverDataUri(t.content_id, t.title);
+                const trackCover = t.has_cover ? apiClient.getCoverUrl(t.content_id) : fallbackTrackCover;
                 return (
                   <div
                     key={`${t.content_id}-${idx}`}
@@ -173,7 +176,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                       <img
                         src={trackCover}
                         alt=""
-                        style={{ width: '32px', height: '32px', borderRadius: '4px', flexShrink: 0 }}
+                        onError={(e) => {
+                          e.currentTarget.src = fallbackTrackCover;
+                        }}
+                        style={{ width: '32px', height: '32px', borderRadius: '4px', flexShrink: 0, objectFit: 'cover' }}
                       />
                       <div style={{ overflow: 'hidden' }}>
                         <div
@@ -246,7 +252,14 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               transition: 'all 0.3s ease',
             }}
           >
-            <img src={coverArtUri} alt="Track artwork" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <img
+              src={coverArtUri}
+              alt="Track artwork"
+              onError={(e) => {
+                e.currentTarget.src = fallbackCoverUri;
+              }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
           </div>
           <div style={{ overflow: 'hidden' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
