@@ -396,3 +396,61 @@ func TestCatalogModerationFiltering(t *testing.T) {
 	}
 }
 
+func TestCatalogCoverArt(t *testing.T) {
+	ctx := context.Background()
+	cat, imp, _ := setupTestCatalog(t)
+	_, privKey, _ := crypto.GenerateKeyPair()
+
+	audioData := make([]byte, 50*1024)
+	coverData := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a} // Fake PNG header
+
+	m, err := imp.Import(ctx, importer.ImportParams{
+		Title:        "Cover Track",
+		Artist:       "Cover Artist",
+		LicenseCode:  protocol.LicenseCC0,
+		PublisherKey: privKey,
+		AudioData:    bytes.NewReader(audioData),
+		CoverData:    coverData,
+		CoverMime:    "image/png",
+	})
+	if err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+
+	// 1. Verify Track has HasCover = true
+	track, err := cat.GetTrack(ctx, m.ContentID)
+	if err != nil {
+		t.Fatalf("GetTrack failed: %v", err)
+	}
+	if !track.HasCover {
+		t.Fatal("expected track.HasCover to be true")
+	}
+
+	// 2. Verify ListTracks also reports HasCover = true
+	tracks, total, err := cat.ListTracks(ctx, catalog.Query{})
+	if err != nil || total != 1 || len(tracks) != 1 {
+		t.Fatalf("ListTracks failed: total=%d, err=%v", total, err)
+	}
+	if !tracks[0].HasCover {
+		t.Fatal("expected ListTracks track.HasCover to be true")
+	}
+
+	// 3. Verify GetCover returns exact data and MIME
+	rawCover, mime, err := cat.GetCover(ctx, m.ContentID)
+	if err != nil {
+		t.Fatalf("GetCover failed: %v", err)
+	}
+	if mime != "image/png" {
+		t.Fatalf("expected image/png, got %s", mime)
+	}
+	if !bytes.Equal(rawCover, coverData) {
+		t.Fatal("retrieved cover bytes mismatch")
+	}
+
+	// 4. Non-existent track cover returns ErrTrackNotFound
+	_, _, err = cat.GetCover(ctx, "nonexistent-id")
+	if err == nil {
+		t.Fatal("expected ErrTrackNotFound for nonexistent cover, got nil")
+	}
+}
+

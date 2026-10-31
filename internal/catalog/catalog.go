@@ -36,6 +36,7 @@ type Track struct {
 	AvailabilityPct float64 `json:"availability_pct"` // 0.0 - 100.0%
 	Blocked         bool    `json:"blocked"`
 	BlockReason     string  `json:"block_reason,omitempty"`
+	HasCover        bool    `json:"has_cover"`
 }
 
 // Query specifies filtering, searching, and pagination parameters.
@@ -101,10 +102,12 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 				t.pinned, t.created_at,
 				(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks,
 				CASE WHEN bc.content_id IS NOT NULL THEN 1 ELSE 0 END AS is_blocked,
-				COALESCE(bc.reason_text, '') AS block_reason
+				COALESCE(bc.reason_text, '') AS block_reason,
+				CASE WHEN tc.content_id IS NOT NULL THEN 1 ELSE 0 END AS has_cover
 			FROM tracks t
 			JOIN tracks_fts fts ON t.content_id = fts.content_id
 			LEFT JOIN blocked_content bc ON t.content_id = bc.content_id
+			LEFT JOIN track_covers tc ON t.content_id = tc.content_id
 			WHERE tracks_fts MATCH ?`
 		if !q.IncludeBlocked {
 			listQuery += " AND bc.content_id IS NULL"
@@ -137,9 +140,11 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 				t.pinned, t.created_at,
 				(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks,
 				CASE WHEN bc.content_id IS NOT NULL THEN 1 ELSE 0 END AS is_blocked,
-				COALESCE(bc.reason_text, '') AS block_reason
+				COALESCE(bc.reason_text, '') AS block_reason,
+				CASE WHEN tc.content_id IS NOT NULL THEN 1 ELSE 0 END AS has_cover
 			FROM tracks t
 			LEFT JOIN blocked_content bc ON t.content_id = bc.content_id
+			LEFT JOIN track_covers tc ON t.content_id = tc.content_id
 			WHERE 1=1`
 		if !q.IncludeBlocked {
 			listQuery += " AND bc.content_id IS NULL"
@@ -178,19 +183,20 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 	var tracks []Track
 	for rows.Next() {
 		var t Track
-		var pinnedInt, storedBlocks, isBlockedInt int
+		var pinnedInt, storedBlocks, isBlockedInt, hasCoverInt int
 		err := rows.Scan(
 			&t.ContentID, &t.Title, &t.Artist, &t.Description, &t.DurationMs,
 			&t.BitrateKbps, &t.TotalSizeBytes, &t.BlockSize, &t.BlockCount,
 			&t.PublisherKey, &t.PublishedAt, &t.LicenseCode, &t.Signature,
 			&pinnedInt, &t.CreatedAt, &storedBlocks,
-			&isBlockedInt, &t.BlockReason,
+			&isBlockedInt, &t.BlockReason, &hasCoverInt,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("catalog: failed to scan track: %w", err)
 		}
 		t.Pinned = (pinnedInt == 1)
 		t.Blocked = (isBlockedInt == 1)
+		t.HasCover = (hasCoverInt == 1)
 		if t.BlockCount > 0 {
 			t.AvailabilityPct = float64(storedBlocks) / float64(t.BlockCount) * 100.0
 		}
@@ -214,19 +220,21 @@ func (c *Catalog) GetTrack(ctx context.Context, contentID string) (*Track, error
 			t.pinned, t.created_at,
 			(SELECT COUNT(*) FROM blocks b WHERE b.content_id = t.content_id AND b.is_stored = 1) AS stored_blocks,
 			CASE WHEN bc.content_id IS NOT NULL THEN 1 ELSE 0 END AS is_blocked,
-			COALESCE(bc.reason_text, '') AS block_reason
+			COALESCE(bc.reason_text, '') AS block_reason,
+			CASE WHEN tc.content_id IS NOT NULL THEN 1 ELSE 0 END AS has_cover
 		FROM tracks t
 		LEFT JOIN blocked_content bc ON t.content_id = bc.content_id
+		LEFT JOIN track_covers tc ON t.content_id = tc.content_id
 		WHERE t.content_id = ?`
 
 	var t Track
-	var pinnedInt, storedBlocks, isBlockedInt int
+	var pinnedInt, storedBlocks, isBlockedInt, hasCoverInt int
 	err := c.db.Raw().QueryRowContext(ctx, query, contentID).Scan(
 		&t.ContentID, &t.Title, &t.Artist, &t.Description, &t.DurationMs,
 		&t.BitrateKbps, &t.TotalSizeBytes, &t.BlockSize, &t.BlockCount,
 		&t.PublisherKey, &t.PublishedAt, &t.LicenseCode, &t.Signature,
 		&pinnedInt, &t.CreatedAt, &storedBlocks,
-		&isBlockedInt, &t.BlockReason,
+		&isBlockedInt, &t.BlockReason, &hasCoverInt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -237,6 +245,7 @@ func (c *Catalog) GetTrack(ctx context.Context, contentID string) (*Track, error
 
 	t.Pinned = (pinnedInt == 1)
 	t.Blocked = (isBlockedInt == 1)
+	t.HasCover = (hasCoverInt == 1)
 	if t.BlockCount > 0 {
 		t.AvailabilityPct = float64(storedBlocks) / float64(t.BlockCount) * 100.0
 	}
@@ -449,6 +458,20 @@ func (c *Catalog) Stats(ctx context.Context) (totalTracks int, storedBytes int64
 		return 0, 0, fmt.Errorf("catalog: failed to query stats: %w", err)
 	}
 	return totalTracks, storedBytes, nil
+}
+
+// GetCover retrieves the raw binary data and MIME type for a track's cover image.
+func (c *Catalog) GetCover(ctx context.Context, contentID string) ([]byte, string, error) {
+	var mimeType string
+	var data []byte
+	err := c.db.Raw().QueryRowContext(ctx, "SELECT mime_type, data FROM track_covers WHERE content_id = ?", contentID).Scan(&mimeType, &data)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, "", ErrTrackNotFound
+		}
+		return nil, "", fmt.Errorf("catalog: failed to get cover: %w", err)
+	}
+	return data, mimeType, nil
 }
 
 

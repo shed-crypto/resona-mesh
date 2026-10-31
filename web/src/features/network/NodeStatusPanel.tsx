@@ -10,6 +10,7 @@ export const NodeStatusPanel: React.FC = () => {
   const [isConnectOpen, setIsConnectOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [copiedAddress, setCopiedAddress] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
 
   const dialableAddrs = (status?.listen_addrs || []).filter(Boolean);
   const primaryAddr = dialableAddrs.find((a) => !a.includes('/127.0.0.1/') && !a.includes('/169.254.')) || dialableAddrs[0];
@@ -19,6 +20,13 @@ export const NodeStatusPanel: React.FC = () => {
     navigator.clipboard.writeText(primaryAddr);
     setCopiedAddress(true);
     setTimeout(() => setCopiedAddress(false), 2500);
+  };
+
+  const handleCopyMyKey = () => {
+    if (!status?.publisher_key) return;
+    navigator.clipboard.writeText(status.publisher_key);
+    setCopiedKey(true);
+    setTimeout(() => setCopiedKey(false), 2500);
   };
 
   const formatBytes = (bytes: number) => {
@@ -193,10 +201,34 @@ export const NodeStatusPanel: React.FC = () => {
         )}
 
         {/* Node Identity Key */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }} title={`Full Key: ${status.publisher_key}`}>
-          <Key size={14} style={{ color: 'var(--text-muted)' }} />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>{shortKey}</span>
-        </div>
+        <button
+          type="button"
+          onClick={handleCopyMyKey}
+          title={copiedKey ? 'Ключ скопійовано!' : `Скопіювати публічний ключ вузла:\n${status.publisher_key}`}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: copiedKey ? 'rgba(16, 185, 129, 0.15)' : 'none',
+            border: copiedKey ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid transparent',
+            padding: '2px 7px',
+            borderRadius: 'var(--radius-sm)',
+            cursor: 'pointer',
+            color: copiedKey ? 'var(--accent-emerald)' : 'inherit',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            if (!copiedKey) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+          }}
+          onMouseLeave={(e) => {
+            if (!copiedKey) e.currentTarget.style.backgroundColor = 'transparent';
+          }}
+        >
+          {copiedKey ? <Check size={13} /> : <Key size={14} style={{ color: 'var(--text-muted)' }} />}
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
+            {copiedKey ? 'Скопійовано!' : shortKey}
+          </span>
+        </button>
 
         {/* Storage Usage Button */}
         <button

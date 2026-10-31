@@ -15,6 +15,7 @@ import type { Track } from '../../types/track';
 import { Button } from '../../shared/components/Button';
 import { Badge } from '../../shared/components/Badge';
 import { generateCoverDataUri } from '../../shared/utils/artwork';
+import { apiClient } from '../../shared/api/client';
 
 interface PlaylistsModalProps {
   isOpen: boolean;
@@ -443,7 +444,8 @@ export const PlaylistsModal: React.FC<PlaylistsModalProps> = ({
                     </div>
                   ) : (
                     playlistTracks.map((track, idx) => {
-                      const cover = generateCoverDataUri(track.content_id, track.title);
+                      const fallbackCover = generateCoverDataUri(track.content_id, track.title);
+                      const cover = track.has_cover ? apiClient.getCoverUrl(track.content_id) : fallbackCover;
                       return (
                         <div
                           key={`${track.content_id}-${idx}`}
@@ -465,7 +467,10 @@ export const PlaylistsModal: React.FC<PlaylistsModalProps> = ({
                             <img
                               src={cover}
                               alt=""
-                              style={{ width: '36px', height: '36px', borderRadius: '4px', flexShrink: 0 }}
+                              onError={(e) => {
+                                e.currentTarget.src = fallbackCover;
+                              }}
+                              style={{ width: '36px', height: '36px', borderRadius: '4px', flexShrink: 0, objectFit: 'cover' }}
                             />
                             <div style={{ overflow: 'hidden' }}>
                               <div

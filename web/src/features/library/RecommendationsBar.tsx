@@ -2,6 +2,7 @@ import React from 'react';
 import { Sparkles, Play, ListPlus, ShieldCheck } from 'lucide-react';
 import type { Track } from '../../types/track';
 import { generateCoverDataUri } from '../../shared/utils/artwork';
+import { apiClient } from '../../shared/api/client';
 
 interface RecommendationsBarProps {
   tracks: Track[];
@@ -74,7 +75,8 @@ export const RecommendationsBar: React.FC<RecommendationsBarProps> = ({
       >
         {tracks.map((track) => {
           const isActive = currentTrack?.content_id === track.content_id;
-          const coverUri = generateCoverDataUri(track.content_id, track.title);
+          const fallbackCoverUri = generateCoverDataUri(track.content_id, track.title);
+          const coverUri = track.has_cover ? apiClient.getCoverUrl(track.content_id) : fallbackCoverUri;
 
           return (
             <div
@@ -100,7 +102,14 @@ export const RecommendationsBar: React.FC<RecommendationsBarProps> = ({
                   position: 'relative',
                 }}
               >
-                <img src={coverUri} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <img
+                  src={coverUri}
+                  alt=""
+                  onError={(e) => {
+                    e.currentTarget.src = fallbackCoverUri;
+                  }}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
               </div>
 
               <div style={{ flex: 1, minWidth: 0 }}>

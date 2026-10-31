@@ -136,6 +136,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tracks", s.handleListTracks)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}", s.handleGetTrack)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}/manifest", s.handleGetManifest)
+	s.mux.HandleFunc("GET /api/v1/tracks/{id}/cover", s.handleGetTrackCover)
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/pin", s.handlePinTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/unpin", s.handleUnpinTrack)
 	s.mux.HandleFunc("DELETE /api/v1/tracks/{id}", s.handleDeleteTrack)
@@ -248,6 +249,31 @@ func (s *Server) handleGetManifest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, manifest)
+}
+
+// handleGetTrackCover streams the binary cover art image for a track.
+func (s *Server) handleGetTrackCover(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	data, mimeType, err := s.catalog.GetCover(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "cover art not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to retrieve cover art")
+		return
+	}
+
+	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 // handlePinTrack toggles or sets the local pinning status of a track with storage quota validation.
@@ -405,6 +431,21 @@ func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var coverBytes []byte
+	var coverMime string
+	if coverFile, coverHeader, err := r.FormFile("cover_file"); err == nil && coverFile != nil {
+		defer coverFile.Close()
+		// Limit cover art file to 5MB
+		data, readErr := io.ReadAll(io.LimitReader(coverFile, 5*1024*1024))
+		if readErr == nil && len(data) > 0 {
+			coverBytes = data
+			coverMime = coverHeader.Header.Get("Content-Type")
+			if coverMime == "" {
+				coverMime = http.DetectContentType(data)
+			}
+		}
+	}
+
 	manifest, err := s.importer.Import(r.Context(), importer.ImportParams{
 		Title:        title,
 		Artist:       artist,
@@ -414,6 +455,8 @@ func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
 		LicenseCode:  licenseCode,
 		PublisherKey: s.publisherKey,
 		AudioData:    file,
+		CoverData:    coverBytes,
+		CoverMime:    coverMime,
 	})
 	if err != nil {
 		if errors.Is(err, importer.ErrTrackAlreadyExists) {

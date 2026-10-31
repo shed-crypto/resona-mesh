@@ -206,5 +206,9 @@ export const apiClient = {
   getStreamUrl(id: string): string {
     return `${API_BASE}/stream/${id}`;
   },
+
+  getCoverUrl(id: string): string {
+    return `${API_BASE}/tracks/${id}/cover`;
+  },
 };
 
