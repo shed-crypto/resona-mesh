@@ -199,6 +199,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer p2pHost.Close()
+	apiServer.SetP2PHost(p2pHost)
 
 	peerTracker := p2p.NewPeerTracker()
 
