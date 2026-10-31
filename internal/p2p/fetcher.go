@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
 	"resonamesh/internal/storage"
 )
 
@@ -78,8 +79,8 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 		)
 	}
 
-	// 2. Discover available swarm peers
-	peers := f.host.ConnectedPeers()
+	// 2. Discover available swarm peers, prioritizing direct P2P swarm nodes ahead of WebSocket bootstrap relays
+	peers := f.prioritizedSwarmPeers()
 	if len(peers) == 0 {
 		slog.Warn("No connected swarm peers available to fetch block", "hash", blockHash)
 		return nil, ErrNoSwarmPeersAvailable
@@ -159,12 +160,9 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 			f.quotaManager.Commit(resToken, int64(len(data)))
 		}
 
-		connType := "direct"
-		for _, c := range f.host.Network().ConnsToPeer(peerID) {
-			if c.Stat().Limited || strings.Contains(c.RemoteMultiaddr().String(), "p2p-circuit") {
-				connType = "relayed"
-				break
-			}
+		connType := "relayed"
+		if f.host.HasDirectConnection(peerID) {
+			connType = "direct"
 		}
 
 		slog.Info("Successfully fetched block from swarm peer",
@@ -178,4 +176,47 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 
 	slog.Warn("Failed to fetch block from any connected peer", "hash", blockHash, "peers_tried", len(peers))
 	return nil, ErrBlockFetchFailed
+}
+
+// prioritizedSwarmPeers orders connected peers so that direct non-WebSocket P2P peers are queried first,
+// followed by circuit-relayed peers, and WebSocket-only bootstrap relays last.
+func (f *Fetcher) prioritizedSwarmPeers() []peer.ID {
+	all := f.host.ConnectedPeers()
+	if len(all) <= 1 {
+		return all
+	}
+
+	var directP2P []peer.ID
+	var relayedP2P []peer.ID
+	var wsRelays []peer.ID
+
+	for _, pid := range all {
+		isDirect := false
+		isWSOnly := true
+		conns := f.host.Network().ConnsToPeer(pid)
+		for _, c := range conns {
+			addrStr := c.RemoteMultiaddr().String()
+			if !c.Stat().Limited && !strings.Contains(addrStr, "p2p-circuit") {
+				isDirect = true
+			}
+			if !strings.Contains(addrStr, "/ws") && !strings.Contains(addrStr, "/wss") {
+				isWSOnly = false
+			}
+		}
+
+		switch {
+		case isDirect && !isWSOnly:
+			directP2P = append(directP2P, pid)
+		case !isWSOnly:
+			relayedP2P = append(relayedP2P, pid)
+		default:
+			wsRelays = append(wsRelays, pid)
+		}
+	}
+
+	ordered := make([]peer.ID, 0, len(all))
+	ordered = append(ordered, directP2P...)
+	ordered = append(ordered, relayedP2P...)
+	ordered = append(ordered, wsRelays...)
+	return ordered
 }
