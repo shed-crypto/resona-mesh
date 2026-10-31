@@ -28,7 +28,7 @@ const (
 	MaxBlockRequestSize = 64 * 1024
 
 	// StreamTimeout limits the duration of an individual block wire exchange.
-	StreamTimeout = 10 * time.Second
+	StreamTimeout = 20 * time.Second
 )
 
 var (
@@ -122,7 +122,7 @@ func (ph *ProtocolHandler) handleStream(s network.Stream) {
 
 	data, err := ph.provider.GetBlock(ctx, req.ContentID, req.BlockIndex, req.BlockHash)
 	if err != nil {
-		slog.Debug("Block not found locally", "hash", req.BlockHash, "err", err)
+		slog.Warn("Block requested by swarm peer not found locally", "peer_id", s.Conn().RemotePeer().String(), "hash", req.BlockHash)
 		_ = binary.Write(s, binary.BigEndian, StatusNotFound)
 		return
 	}
@@ -137,9 +137,10 @@ func (ph *ProtocolHandler) handleStream(s network.Stream) {
 	}
 
 	if _, err := s.Write(data); err != nil {
-		slog.Debug("Failed to write block payload to stream", "err", err)
+		slog.Warn("Failed to write block payload to stream", "peer_id", s.Conn().RemotePeer().String(), "err", err)
 		return
 	}
+	slog.Info("Served audio block to swarm peer", "peer_id", s.Conn().RemotePeer().String(), "hash", req.BlockHash, "bytes", len(data))
 }
 
 // RequestBlock fetches an individual block from a remote peer over libp2p.
@@ -153,7 +154,7 @@ func RequestBlock(
 		return nil, ErrEmptyBlockExpected
 	}
 
-	s, err := h.Raw().NewStream(ctx, peerID, protocol.ProtocolBlock)
+	s, err := h.NewDataStreamPreferDirect(ctx, peerID, DefaultDirectUpgradeWait, protocol.ProtocolBlock)
 	if err != nil {
 		return nil, fmt.Errorf("p2p: failed to open block stream to %s: %w", peerID, err)
 	}

@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Track } from '../../types/track';
 import { apiClient } from '../api/client';
+import { generateCoverDataUri } from '../utils/artwork';
+import { recordLocalPlay } from './useRecommendations';
 
 export type PlayerState = 'idle' | 'connecting' | 'buffering' | 'playing' | 'paused' | 'stalled';
 
@@ -13,7 +15,29 @@ export function useAudioPlayer() {
   const [volume, setVolume] = useState(0.85);
   const [isMuted, setIsMuted] = useState(false);
 
+  // Playback Queue & Controls
+  const [queue, setQueue] = useState<Track[]>([]);
+  const [queueIndex, setQueueIndex] = useState<number>(-1);
+  const [isShuffle, setIsShuffle] = useState(false);
+  const [isRepeat, setIsRepeat] = useState(false);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Refs for current values accessible in audio event listeners
+  const queueRef = useRef<Track[]>(queue);
+  queueRef.current = queue;
+
+  const queueIndexRef = useRef<number>(queueIndex);
+  queueIndexRef.current = queueIndex;
+
+  const isShuffleRef = useRef<boolean>(isShuffle);
+  isShuffleRef.current = isShuffle;
+
+  const isRepeatRef = useRef<boolean>(isRepeat);
+  isRepeatRef.current = isRepeat;
+
+  const currentTrackRef = useRef<Track | null>(currentTrack);
+  currentTrackRef.current = currentTrack;
 
   // Initialize single persistent audio instance
   useEffect(() => {
@@ -49,6 +73,31 @@ export function useAudioPlayer() {
     };
 
     const onEnded = () => {
+      if (currentTrackRef.current) {
+        recordLocalPlay(currentTrackRef.current.content_id, true);
+      }
+
+      if (isRepeatRef.current) {
+        audio.currentTime = 0;
+        audio.play().catch(console.error);
+        return;
+      }
+
+      const q = queueRef.current;
+      const idx = queueIndexRef.current;
+
+      if (q.length > 0) {
+        let nextIdx = idx + 1;
+        if (isShuffleRef.current) {
+          nextIdx = Math.floor(Math.random() * q.length);
+        }
+
+        if (nextIdx < q.length) {
+          playTrackInternal(q[nextIdx], q, nextIdx);
+          return;
+        }
+      }
+
       setPlayerState('paused');
       setCurrentTime(0);
     };
@@ -83,30 +132,36 @@ export function useAudioPlayer() {
     }
   }, [volume, isMuted]);
 
-  // Sync with Media Session API
-  useEffect(() => {
-    if ('mediaSession' in navigator && currentTrack) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: currentTrack.title,
-        artist: currentTrack.artist,
-        album: 'ResonaMesh Swarm',
-      });
+  const playTrackInternal = useCallback(async (track: Track, newQueue?: Track[], newIndex?: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
 
-      navigator.mediaSession.setActionHandler('play', () => {
-        audioRef.current?.play().catch(console.error);
-      });
-      navigator.mediaSession.setActionHandler('pause', () => {
-        audioRef.current?.pause();
-      });
-      navigator.mediaSession.setActionHandler('seekto', (details) => {
-        if (details.seekTime !== undefined && audioRef.current) {
-          audioRef.current.currentTime = details.seekTime;
-        }
-      });
+    if (newQueue) {
+      setQueue(newQueue);
+      setQueueIndex(newIndex !== undefined ? newIndex : newQueue.findIndex((t) => t.content_id === track.content_id));
+    } else if (newIndex !== undefined) {
+      setQueueIndex(newIndex);
     }
-  }, [currentTrack]);
 
-  const playTrack = useCallback(async (track: Track) => {
+    setCurrentTrack(track);
+    setPlayerState('connecting');
+    setCurrentTime(0);
+    setBufferedPct(0);
+    setDuration(track.duration_ms > 0 ? track.duration_ms / 1000 : 0);
+
+    const streamUrl = apiClient.getStreamUrl(track.content_id);
+    audio.src = streamUrl;
+    audio.load();
+    recordLocalPlay(track.content_id, false);
+
+    try {
+      await audio.play();
+    } catch (err: unknown) {
+      console.warn('Playback initiation failed or interrupted:', err);
+    }
+  }, []);
+
+  const playTrack = useCallback(async (track: Track, newQueue?: Track[]) => {
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -119,22 +174,52 @@ export function useAudioPlayer() {
       return;
     }
 
-    setCurrentTrack(track);
-    setPlayerState('connecting');
-    setCurrentTime(0);
-    setBufferedPct(0);
-    setDuration(track.duration_ms > 0 ? track.duration_ms / 1000 : 0);
+    const currentQ = newQueue || (queue.length > 0 ? queue : [track]);
+    const idx = currentQ.findIndex((t) => t.content_id === track.content_id);
+    await playTrackInternal(track, currentQ, idx >= 0 ? idx : 0);
+  }, [currentTrack, queue, playTrackInternal]);
 
-    const streamUrl = apiClient.getStreamUrl(track.content_id);
-    audio.src = streamUrl;
-    audio.load();
-
-    try {
-      await audio.play();
-    } catch (err: unknown) {
-      console.warn('Playback initiation failed or interrupted:', err);
+  const playNext = useCallback(() => {
+    if (queue.length === 0) return;
+    let nextIdx = queueIndex + 1;
+    if (isShuffle) {
+      nextIdx = Math.floor(Math.random() * queue.length);
     }
-  }, [currentTrack]);
+    if (nextIdx < queue.length) {
+      playTrackInternal(queue[nextIdx], queue, nextIdx);
+    } else if (isRepeat && queue.length > 0) {
+      playTrackInternal(queue[0], queue, 0);
+    }
+  }, [queue, queueIndex, isShuffle, isRepeat, playTrackInternal]);
+
+  const playPrevious = useCallback(() => {
+    if (queue.length === 0) return;
+    const audio = audioRef.current;
+    if (audio && audio.currentTime > 3) {
+      audio.currentTime = 0;
+      setCurrentTime(0);
+      return;
+    }
+    const prevIdx = queueIndex > 0 ? queueIndex - 1 : 0;
+    playTrackInternal(queue[prevIdx], queue, prevIdx);
+  }, [queue, queueIndex, playTrackInternal]);
+
+  const toggleShuffle = useCallback(() => {
+    setIsShuffle((prev) => !prev);
+  }, []);
+
+  const toggleRepeat = useCallback(() => {
+    setIsRepeat((prev) => !prev);
+  }, []);
+
+  const addToQueue = useCallback((track: Track) => {
+    setQueue((prev) => [...prev, track]);
+  }, []);
+
+  const clearQueue = useCallback(() => {
+    setQueue([]);
+    setQueueIndex(-1);
+  }, []);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
@@ -155,6 +240,40 @@ export function useAudioPlayer() {
     setCurrentTime(targetTimeSeconds);
   }, []);
 
+  // Sync with Media Session API
+  useEffect(() => {
+    if ('mediaSession' in navigator && currentTrack) {
+      const coverUri = generateCoverDataUri(currentTrack.content_id, currentTrack.title);
+
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentTrack.title,
+        artist: currentTrack.artist,
+        album: 'ResonaMesh Swarm',
+        artwork: [
+          { src: coverUri, sizes: '200x200', type: 'image/svg+xml' },
+        ],
+      });
+
+      navigator.mediaSession.setActionHandler('play', () => {
+        audioRef.current?.play().catch(console.error);
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        audioRef.current?.pause();
+      });
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        playNext();
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        playPrevious();
+      });
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (details.seekTime !== undefined && audioRef.current) {
+          audioRef.current.currentTime = details.seekTime;
+        }
+      });
+    }
+  }, [currentTrack, playNext, playPrevious]);
+
   return {
     currentTrack,
     playerState,
@@ -169,5 +288,16 @@ export function useAudioPlayer() {
     togglePlay,
     seek,
     isPlaying: playerState === 'playing',
+    // Queue & Controls
+    queue,
+    queueIndex,
+    isShuffle,
+    isRepeat,
+    playNext,
+    playPrevious,
+    toggleShuffle,
+    toggleRepeat,
+    addToQueue,
+    clearQueue,
   };
 }

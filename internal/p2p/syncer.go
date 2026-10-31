@@ -143,7 +143,7 @@ func (cs *CatalogSyncer) handleStream(s network.Stream) {
 // SyncFromPeer requests all known manifests from a remote peer, verifies their Ed25519 signatures,
 // and registers unseeded metadata into the local catalog.
 func (cs *CatalogSyncer) SyncFromPeer(ctx context.Context, peerID peer.ID) (int, error) {
-	s, err := cs.host.Raw().NewStream(ctx, peerID, protocol.ProtocolManifest)
+	s, err := cs.host.NewControlStream(ctx, peerID, protocol.ProtocolManifest)
 	if err != nil {
 		return 0, fmt.Errorf("p2p: failed to open manifest stream to %s: %w", peerID, err)
 	}

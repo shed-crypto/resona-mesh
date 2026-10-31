@@ -312,3 +312,49 @@ func TestImportBlockedContent(t *testing.T) {
 	}
 }
 
+func TestImporterWithCoverArt(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	db, err := storage.Open(filepath.Join(tmpDir, "test.db"))
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+	bs, _ := storage.NewBlockStore(tmpDir)
+
+	imp := importer.NewImporter(bs, db)
+	_, privKey, _ := crypto.GenerateKeyPair()
+	sampleAudio := make([]byte, 50*1024)
+	sampleCover := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46} // Fake JPEG header
+
+	params := importer.ImportParams{
+		Title:        "Track With Art",
+		Artist:       "Artist Art",
+		LicenseCode:  protocol.LicenseCC0,
+		PublisherKey: privKey,
+		AudioData:    bytes.NewReader(sampleAudio),
+		CoverData:    sampleCover,
+		CoverMime:    "image/jpeg",
+	}
+
+	manifest, err := imp.Import(ctx, params)
+	if err != nil {
+		t.Fatalf("failed to import track with cover: %v", err)
+	}
+
+	var mimeType string
+	var coverData []byte
+	err = db.Raw().QueryRowContext(ctx, "SELECT mime_type, data FROM track_covers WHERE content_id = ?", manifest.ContentID).Scan(&mimeType, &coverData)
+	if err != nil {
+		t.Fatalf("failed to query track cover from db: %v", err)
+	}
+
+	if mimeType != "image/jpeg" {
+		t.Fatalf("expected mime type image/jpeg, got %s", mimeType)
+	}
+	if !bytes.Equal(coverData, sampleCover) {
+		t.Fatal("stored cover bytes do not match original payload")
+	}
+}
+

@@ -119,3 +119,14 @@ CREATE TABLE IF NOT EXISTS blocked_content (
 CREATE INDEX IF NOT EXISTS idx_blocked_content_payload ON blocked_content(payload_hash);
 `
 
+// MigrationCoverSQL creates the relational table for storing track cover images.
+const MigrationCoverSQL = `
+CREATE TABLE IF NOT EXISTS track_covers (
+    content_id TEXT PRIMARY KEY,
+    mime_type TEXT NOT NULL,
+    data BLOB NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(content_id) REFERENCES tracks(content_id) ON DELETE CASCADE
+);
+`
+

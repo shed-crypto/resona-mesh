@@ -28,7 +28,7 @@ func Open(path string) (*DB, error) {
 
 	dsn := path
 	if path != ":memory:" {
-		dsn = fmt.Sprintf("%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)", path)
+		dsn = fmt.Sprintf("%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)&_txlock=immediate", path)
 	}
 
 	sqlDB, err := sql.Open("sqlite", dsn)
@@ -68,6 +68,7 @@ func (d *DB) migrate() error {
 		MigrationInitSQL,
 		MigrationFTS5SQL,
 		MigrationModerationSQL,
+		MigrationCoverSQL,
 	}
 
 	for idx, m := range migrations {

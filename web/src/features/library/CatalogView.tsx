@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
-import { Plus, Disc3, RefreshCw, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Plus, Disc3, RefreshCw, AlertCircle, ListMusic } from 'lucide-react';
 import type { Track } from '../../types/track';
 import { useCatalog } from '../../shared/hooks/useCatalog';
+import { useRecommendations } from '../../shared/hooks/useRecommendations';
 import { TrackCard } from './TrackCard';
 import { SearchBar } from './SearchBar';
 import { ImportModal } from './ImportModal';
+import { RecommendationsBar } from './RecommendationsBar';
 import { Button } from '../../shared/components/Button';
 import { Skeleton } from '../../shared/components/Skeleton';
 
@@ -14,6 +16,11 @@ interface CatalogViewProps {
   onPlayTrack: (track: Track) => void;
   onTogglePlay?: () => void;
   onReportTrack?: (track: Track) => void;
+  onAddToPlaylist?: (track: Track) => void;
+  onOpenPlaylists?: () => void;
+  playlistsCount?: number;
+  onTracksLoaded?: (tracks: Track[]) => void;
+  refreshTrigger?: number;
 }
 
 export const CatalogView: React.FC<CatalogViewProps> = ({
@@ -22,6 +29,11 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   onPlayTrack,
   onTogglePlay,
   onReportTrack,
+  onAddToPlaylist,
+  onOpenPlaylists,
+  playlistsCount = 0,
+  onTracksLoaded,
+  refreshTrigger,
 }) => {
   const {
     tracks,
@@ -38,6 +50,19 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   } = useCatalog();
 
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const { recommendedTracks, topArtists } = useRecommendations(tracks);
+
+  useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger > 0) {
+      refresh();
+    }
+  }, [refreshTrigger]);
+
+  useEffect(() => {
+    if (tracks.length > 0) {
+      onTracksLoaded?.(tracks);
+    }
+  }, [tracks, onTracksLoaded]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%' }}>
@@ -59,6 +84,16 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
         />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {onOpenPlaylists && (
+            <Button
+              variant="secondary"
+              size="md"
+              icon={<ListMusic size={15} style={{ color: 'var(--accent-emerald)' }} />}
+              onClick={onOpenPlaylists}
+            >
+              Playlists ({playlistsCount})
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="md"
@@ -163,7 +198,18 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           )}
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {!search && !pinnedOnly && recommendedTracks.length > 0 && (
+            <RecommendationsBar
+              tracks={recommendedTracks}
+              topArtists={topArtists}
+              currentTrack={currentTrack}
+              isPlaying={isPlaying}
+              onPlayTrack={onPlayTrack}
+              onAddToPlaylist={onAddToPlaylist}
+            />
+          )}
+
           <div
             style={{
               display: 'flex',
@@ -179,7 +225,8 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             <span>SHARDED 256 KIB BLOCKS</span>
           </div>
 
-          {tracks.map((track) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {tracks.map((track) => (
             <TrackCard
               key={track.content_id}
               track={track}
@@ -195,8 +242,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               onTogglePin={() => togglePin(track.content_id, track.pinned)}
               onDelete={() => deleteTrack(track.content_id)}
               onReport={() => onReportTrack?.(track)}
+              onAddToPlaylist={() => onAddToPlaylist?.(track)}
             />
           ))}
+          </div>
         </div>
       )}
 

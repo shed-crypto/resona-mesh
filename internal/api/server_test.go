@@ -860,6 +860,178 @@ func TestAPIModerationEndpoints(t *testing.T) {
 	}
 }
 
+func TestHeadlessRelayMode(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := storage.Open(filepath.Join(tempDir, "headless.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	bs, err := storage.NewBlockStore(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cat := catalog.New(db, bs)
+	imp := importer.NewImporter(bs, db)
+	str := player.NewStreamer(cat, bs)
+	_, priv, _ := crypto.GenerateKeyPair()
+
+	cfg := &config.Config{
+		HTTPAddr:          "127.0.0.1:0",
+		P2PPort:           4001,
+		DataDir:           tempDir,
+		StorageQuotaBytes: 10 * 1024 * 1024,
+		Headless:          true,
+	}
+
+	server := api.NewServer(cfg, cat, imp, str, priv)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	// 1. Verify GET / serves headless relay status page
+	respRoot, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respRoot.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(respRoot.Body)
+	bodyStr := string(bodyBytes)
+	if respRoot.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for root page, got %d", respRoot.StatusCode)
+	}
+	if !strings.Contains(bodyStr, "SWARM RELAY ONLINE") {
+		t.Errorf("expected headless status badge in HTML, got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "Headless Relay Mode Active") {
+		t.Errorf("expected security note in HTML")
+	}
+
+	// 2. Verify POST /api/v1/tracks/import is blocked with 403 Forbidden
+	respImport, err := http.Post(ts.URL+"/api/v1/tracks/import", "multipart/form-data", bytes.NewReader([]byte("dummy")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respImport.Body.Close()
+	if respImport.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for track import in headless mode, got %d", respImport.StatusCode)
+	}
+
+	// 3. Verify DELETE /api/v1/tracks/test-id is blocked with 403 Forbidden
+	reqDelete, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/v1/tracks/test-id", nil)
+	respDelete, err := http.DefaultClient.Do(reqDelete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respDelete.Body.Close()
+	if respDelete.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for track deletion in headless mode, got %d", respDelete.StatusCode)
+	}
+
+	// 4. Verify PUT /api/v1/settings is blocked with 403 Forbidden
+	reqSettings, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings", strings.NewReader(`{"keeper_enabled":true}`))
+	respSettings, err := http.DefaultClient.Do(reqSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respSettings.Body.Close()
+	if respSettings.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 Forbidden for settings update in headless mode, got %d", respSettings.StatusCode)
+	}
+
+	// 5. Verify GET /api/v1/node/status remains accessible
+	respStatus, err := http.Get(ts.URL + "/api/v1/node/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respStatus.Body.Close()
+	if respStatus.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for node status, got %d", respStatus.StatusCode)
+	}
+}
+
+func TestTrackCoverUploadAndServe(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+
+	// 1. Prepare multipart form with audio_file and cover_file
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+
+	// Add audio
+	fw, err := w.CreateFormFile("audio_file", "test.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = fw.Write(make([]byte, 50*1024))
+
+	// Add cover
+	fc, err := w.CreateFormFile("cover_file", "artwork.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02}
+	_, _ = fc.Write(coverBytes)
+
+	_ = w.WriteField("title", "Cover Art Track")
+	_ = w.WriteField("artist", "Graphic Artist")
+	_ = w.WriteField("license", protocol.LicenseCC0)
+	_ = w.Close()
+
+	resp, err := http.Post(ts.URL+"/api/v1/tracks/import", w.FormDataContentType(), &b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 201 Created, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	var importRes struct {
+		Track catalog.Track `json:"track"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&importRes); err != nil {
+		t.Fatal(err)
+	}
+
+	if !importRes.Track.HasCover {
+		t.Fatal("expected imported track to have HasCover = true")
+	}
+
+	// 2. Fetch the cover via GET /api/v1/tracks/{id}/cover
+	coverResp, err := http.Get(ts.URL + "/api/v1/tracks/" + importRes.Track.ContentID + "/cover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer coverResp.Body.Close()
+
+	if coverResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for cover, got %d", coverResp.StatusCode)
+	}
+
+	retrievedCover, err := io.ReadAll(coverResp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(retrievedCover, coverBytes) {
+		t.Fatal("retrieved cover bytes mismatch")
+	}
+
+	// 3. Request cover for non-existent track
+	missingResp, err := http.Get(ts.URL + "/api/v1/tracks/nonexistent/cover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missingResp.Body.Close()
+	if missingResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found, got %d", missingResp.StatusCode)
+	}
+}
+
+
 
 
 

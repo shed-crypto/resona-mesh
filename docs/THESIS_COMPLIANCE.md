@@ -90,3 +90,12 @@ All 16 acceptance test scenarios run via `go test -v ./tests/integration`:
 - **E1 (Streaming Delivery):** Bounded prefetching (B2) reduced median TTFA from 50.5 ms to **6.0 ms** (**88.1% improvement**) with **0.0 ms** playback stall.
 - **E2 (Source Failure & Failover):** Autonomous failover to Keeper replica completed with median latency of **4.0 ms** and stall duration of **8.5 ms**.
 - **E3 (Partition Convergence):** Moderator BLOCK decisions propagated and converged across partitioned segments within **0.5 ms** median latency.
+
+---
+
+## 6. WAN Connectivity & Autonomous NAT Traversal Extension
+
+- **Local Autonomy Baseline (P0):** Zero-configuration local discovery via mDNS (`resonamesh-swarm`) ensures total offline independence during WAN/ISP outages.
+- **Automated Router Port Mapping (UPnP / NAT-PMP):** Integrated `libp2p.NATPortMap()` automatically negotiates TCP port mapping on compatible gateway routers, publishing external WAN multiaddresses without manual router configuration or external tunneling software.
+- **Headless Core Architecture:** The backend runtime operates as a standalone headless daemon with loopback REST/Range APIs (`127.0.0.1:8080`), enabling independent frontend evolution (Tauri, Wails, Electron native desktop shells) without coupling domain logic to presentation.
+- **Future Research Directions (P1/P2):** Integration of Kademlia DHT for global rendezvous discovery and DCUtR / Circuit Relay v2 for symmetric mobile carrier NAT (CGNAT) hole punching.
