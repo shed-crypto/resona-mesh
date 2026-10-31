@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Disc3, RefreshCw, AlertCircle, ListMusic } from 'lucide-react';
 import type { Track } from '../../types/track';
 import { useCatalog } from '../../shared/hooks/useCatalog';
+import { useRecommendations } from '../../shared/hooks/useRecommendations';
 import { TrackCard } from './TrackCard';
 import { SearchBar } from './SearchBar';
 import { ImportModal } from './ImportModal';
+import { RecommendationsBar } from './RecommendationsBar';
 import { Button } from '../../shared/components/Button';
 import { Skeleton } from '../../shared/components/Skeleton';
 
@@ -18,6 +20,7 @@ interface CatalogViewProps {
   onOpenPlaylists?: () => void;
   playlistsCount?: number;
   onTracksLoaded?: (tracks: Track[]) => void;
+  refreshTrigger?: number;
 }
 
 export const CatalogView: React.FC<CatalogViewProps> = ({
@@ -30,6 +33,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   onOpenPlaylists,
   playlistsCount = 0,
   onTracksLoaded,
+  refreshTrigger,
 }) => {
   const {
     tracks,
@@ -46,8 +50,15 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   } = useCatalog();
 
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const { recommendedTracks, topArtists } = useRecommendations(tracks);
 
-  React.useEffect(() => {
+  useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger > 0) {
+      refresh();
+    }
+  }, [refreshTrigger]);
+
+  useEffect(() => {
     if (tracks.length > 0) {
       onTracksLoaded?.(tracks);
     }
@@ -187,7 +198,18 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           )}
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {!search && !pinnedOnly && recommendedTracks.length > 0 && (
+            <RecommendationsBar
+              tracks={recommendedTracks}
+              topArtists={topArtists}
+              currentTrack={currentTrack}
+              isPlaying={isPlaying}
+              onPlayTrack={onPlayTrack}
+              onAddToPlaylist={onAddToPlaylist}
+            />
+          )}
+
           <div
             style={{
               display: 'flex',
@@ -203,7 +225,8 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             <span>SHARDED 256 KIB BLOCKS</span>
           </div>
 
-          {tracks.map((track) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {tracks.map((track) => (
             <TrackCard
               key={track.content_id}
               track={track}
@@ -222,6 +245,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               onAddToPlaylist={() => onAddToPlaylist?.(track)}
             />
           ))}
+          </div>
         </div>
       )}
 
