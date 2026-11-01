@@ -860,6 +860,120 @@ func TestAPIModerationEndpoints(t *testing.T) {
 	}
 }
 
+func TestAPIGovernanceAndIdentityEndpoints(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+
+	// 1. Export identity key
+	expBody, _ := json.Marshal(map[string]string{
+		"passphrase": "super-secure-passphrase-123",
+	})
+	expResp, err := http.Post(ts.URL+"/api/v1/identity/export", "application/json", bytes.NewReader(expBody))
+	if err != nil {
+		t.Fatalf("failed to export identity: %v", err)
+	}
+	defer expResp.Body.Close()
+
+	if expResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for export, got %d", expResp.StatusCode)
+	}
+
+	var bundle crypto.EncryptedKeyBundle
+	if err := json.NewDecoder(expResp.Body).Decode(&bundle); err != nil {
+		t.Fatalf("failed to decode encrypted key bundle: %v", err)
+	}
+	if bundle.Ciphertext == "" || bundle.Salt == "" || bundle.Iterations != 600000 {
+		t.Fatalf("invalid encrypted bundle: %+v", bundle)
+	}
+
+	// 2. Import identity key with wrong passphrase -> should fail 400
+	badImpBody, _ := json.Marshal(map[string]interface{}{
+		"bundle":     bundle,
+		"passphrase": "wrong-passphrase-xyz",
+	})
+	badImpResp, err := http.Post(ts.URL+"/api/v1/identity/import", "application/json", bytes.NewReader(badImpBody))
+	if err != nil {
+		t.Fatalf("failed to post bad import: %v", err)
+	}
+	defer badImpResp.Body.Close()
+
+	if badImpResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for wrong passphrase, got %d", badImpResp.StatusCode)
+	}
+
+	// 3. Import identity key with correct passphrase -> should succeed 200
+	goodImpBody, _ := json.Marshal(map[string]interface{}{
+		"bundle":     bundle,
+		"passphrase": "super-secure-passphrase-123",
+	})
+	goodImpResp, err := http.Post(ts.URL+"/api/v1/identity/import", "application/json", bytes.NewReader(goodImpBody))
+	if err != nil {
+		t.Fatalf("failed to post good import: %v", err)
+	}
+	defer goodImpResp.Body.Close()
+
+	if goodImpResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for good import, got %d", goodImpResp.StatusCode)
+	}
+
+	var impResult map[string]interface{}
+	if err := json.NewDecoder(goodImpResp.Body).Decode(&impResult); err != nil {
+		t.Fatalf("failed to decode import result: %v", err)
+	}
+	if impResult["status"] != "imported" || impResult["restart_required"] != true {
+		t.Fatalf("unexpected import result: %+v", impResult)
+	}
+
+	// 4. Delegate a moderator
+	targetPub, _, _ := crypto.GenerateKeyPair()
+	targetPubHex := crypto.PublicKeyToHex(targetPub)
+
+	delBody, _ := json.Marshal(map[string]interface{}{
+		"action":           "APPROVE_MODERATOR",
+		"moderator_pubkey": targetPubHex,
+		"alias":            "Officer Alice",
+		"duration_sec":     86400,
+	})
+	delResp, err := http.Post(ts.URL+"/api/v1/moderation/moderators", "application/json", bytes.NewReader(delBody))
+	if err != nil {
+		t.Fatalf("failed to post delegate moderator: %v", err)
+	}
+	defer delResp.Body.Close()
+
+	if delResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for moderator delegation, got %d", delResp.StatusCode)
+	}
+
+	var cert protocol.ModeratorCertificate
+	if err := json.NewDecoder(delResp.Body).Decode(&cert); err != nil {
+		t.Fatalf("failed to decode cert: %v", err)
+	}
+	if cert.ModeratorPubKey != targetPubHex || cert.Action != "APPROVE_MODERATOR" {
+		t.Fatalf("unexpected cert: %+v", cert)
+	}
+
+	// 5. List moderators
+	listResp, err := http.Get(ts.URL + "/api/v1/moderation/moderators")
+	if err != nil {
+		t.Fatalf("failed to get moderators: %v", err)
+	}
+	defer listResp.Body.Close()
+
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for list moderators, got %d", listResp.StatusCode)
+	}
+
+	var modList struct {
+		Items []protocol.ModeratorCertificate `json:"items"`
+		Total int                             `json:"total"`
+	}
+	if err := json.NewDecoder(listResp.Body).Decode(&modList); err != nil {
+		t.Fatalf("failed to decode moderator list: %v", err)
+	}
+	if modList.Total != 1 || len(modList.Items) != 1 || modList.Items[0].ModeratorPubKey != targetPubHex {
+		t.Fatalf("unexpected moderator list: %+v", modList)
+	}
+}
+
 func TestHeadlessRelayMode(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := storage.Open(filepath.Join(tempDir, "headless.db"))
@@ -941,7 +1055,24 @@ func TestHeadlessRelayMode(t *testing.T) {
 		t.Errorf("expected 403 Forbidden for settings update in headless mode, got %d", respSettings.StatusCode)
 	}
 
-	// 5. Verify GET /api/v1/node/status remains accessible
+	// 5. Verify identity export and import are blocked in headless mode
+	respExp, _ := http.Post(ts.URL+"/api/v1/identity/export", "application/json", strings.NewReader(`{"passphrase":"secret1234"}`))
+	if respExp != nil {
+		defer respExp.Body.Close()
+		if respExp.StatusCode != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for identity export in headless mode, got %d", respExp.StatusCode)
+		}
+	}
+
+	respImp, _ := http.Post(ts.URL+"/api/v1/identity/import", "application/json", strings.NewReader(`{"passphrase":"secret1234"}`))
+	if respImp != nil {
+		defer respImp.Body.Close()
+		if respImp.StatusCode != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for identity import in headless mode, got %d", respImp.StatusCode)
+		}
+	}
+
+	// 6. Verify GET /api/v1/node/status remains accessible
 	respStatus, err := http.Get(ts.URL + "/api/v1/node/status")
 	if err != nil {
 		t.Fatal(err)
