@@ -130,3 +130,33 @@ CREATE TABLE IF NOT EXISTS track_covers (
 );
 `
 
+
+// MigrationGovernanceSQL creates tables for delegated moderator certificates and offline key rotations.
+const MigrationGovernanceSQL = `
+CREATE TABLE IF NOT EXISTS moderator_certificates (
+    cert_id TEXT PRIMARY KEY,
+    network_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('APPROVE_MODERATOR', 'REVOKE_MODERATOR')),
+    moderator_pubkey TEXT NOT NULL,
+    alias TEXT NOT NULL DEFAULT '',
+    issued_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL DEFAULT 0,
+    root_admin_pubkey TEXT NOT NULL,
+    signature TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mod_certs_pubkey ON moderator_certificates(moderator_pubkey, issued_at DESC);
+
+CREATE TABLE IF NOT EXISTS key_rotations (
+    event_id TEXT PRIMARY KEY,
+    network_id TEXT NOT NULL,
+    key_role TEXT NOT NULL CHECK(key_role IN ('ROOT_ADMIN', 'RELEASE')),
+    new_policy_epoch INTEGER NOT NULL,
+    old_pubkey TEXT NOT NULL,
+    new_pubkey TEXT NOT NULL,
+    recovery_pubkey TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    issued_at INTEGER NOT NULL,
+    signature TEXT NOT NULL,
+    UNIQUE(key_role, new_policy_epoch)
+);
+`
