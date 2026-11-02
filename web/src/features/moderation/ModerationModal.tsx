@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, FileText, Ban, CheckCircle2, Clock, ShieldAlert, ShieldCheck, Scale, Send, Check } from 'lucide-react';
+import {
+  RefreshCw, FileText, Ban, CheckCircle2, Clock, ShieldAlert,
+  ShieldCheck, Scale, Send, Check, Users, KeyRound, Download,
+  Copy, UserPlus, UserX, AlertTriangle, Key
+} from 'lucide-react';
 import { Modal } from '../../shared/components/Modal';
 import { Button } from '../../shared/components/Button';
 import { Badge } from '../../shared/components/Badge';
-import { apiClient } from '../../shared/api/client';
+import { apiClient, type ModeratorCertificate, type EncryptedKeyBundle } from '../../shared/api/client';
 import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
 import type { Report, BlockedItem } from '../../types/track';
 
@@ -22,9 +26,10 @@ const REASON_CODES = [
 ];
 
 export const ModerationModal: React.FC<ModerationModalProps> = ({ isOpen, onClose, onDecisionApplied }) => {
-  const [activeTab, setActiveTab] = useState<'reports' | 'blocked' | 'admin'>('reports');
+  const [activeTab, setActiveTab] = useState<'reports' | 'blocked' | 'admin' | 'moderators' | 'vault'>('reports');
   const [reports, setReports] = useState<Report[]>([]);
   const [blockedItems, setBlockedItems] = useState<BlockedItem[]>([]);
+  const [moderators, setModerators] = useState<ModeratorCertificate[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,18 +41,37 @@ export const ModerationModal: React.FC<ModerationModalProps> = ({ isOpen, onClos
   const [adminExecuting, setAdminExecuting] = useState(false);
   const [adminSuccess, setAdminSuccess] = useState<string | null>(null);
 
+  // Moderator Delegation Form State
+  const [newModPubkey, setNewModPubkey] = useState('');
+  const [newModAlias, setNewModAlias] = useState('');
+  const [newModDays, setNewModDays] = useState('30');
+  const [modSubmitting, setModSubmitting] = useState(false);
+  const [modSuccess, setModSuccess] = useState<string | null>(null);
+
+  // Key Vault Form State
+  const [exportPassphrase, setExportPassphrase] = useState('');
+  const [exportedBundle, setExportedBundle] = useState<EncryptedKeyBundle | null>(null);
+  const [copiedExport, setCopiedExport] = useState(false);
+  const [importBundleText, setImportBundleText] = useState('');
+  const [importPassphrase, setImportPassphrase] = useState('');
+  const [rotationJSONText, setRotationJSONText] = useState('');
+  const [vaultSubmitting, setVaultSubmitting] = useState(false);
+  const [vaultSuccess, setVaultSuccess] = useState<string | null>(null);
+
   const { status: nodeStatus, refresh: refreshNodeStatus } = useNodeStatus();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [repRes, blkRes] = await Promise.all([
+      const [repRes, blkRes, modRes] = await Promise.all([
         apiClient.getReports(),
         apiClient.getBlocked(),
+        apiClient.getModerators().catch(() => ({ items: [] as ModeratorCertificate[], total: 0 })),
       ]);
       setReports(repRes.items || []);
       setBlockedItems(blkRes.items || []);
+      setModerators(modRes.items || []);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load moderation data';
       setError(msg);
@@ -103,13 +127,136 @@ export const ModerationModal: React.FC<ModerationModalProps> = ({ isOpen, onClos
     }
   };
 
+  const handleDelegateModerator = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newModPubkey.trim()) {
+      setError('Moderator public key is required');
+      return;
+    }
+    setModSubmitting(true);
+    setError(null);
+    setModSuccess(null);
+    try {
+      const days = parseInt(newModDays, 10) || 30;
+      await apiClient.delegateModerator({
+        action: 'APPROVE_MODERATOR',
+        moderator_pubkey: newModPubkey.trim(),
+        alias: newModAlias.trim() || 'Moderator',
+        duration_sec: days * 86400,
+      });
+      setModSuccess(`Moderator ${newModAlias.trim() || newModPubkey.slice(0, 12)} successfully approved`);
+      setNewModPubkey('');
+      setNewModAlias('');
+      await fetchData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to delegate moderator';
+      setError(msg);
+    } finally {
+      setModSubmitting(false);
+    }
+  };
+
+  const handleRevokeModerator = async (cert: ModeratorCertificate) => {
+    if (!confirm(`Are you sure you want to revoke moderator privileges for "${cert.alias || cert.moderator_pubkey.slice(0, 12)}"?`)) {
+      return;
+    }
+    setModSubmitting(true);
+    setError(null);
+    setModSuccess(null);
+    try {
+      await apiClient.delegateModerator({
+        action: 'REVOKE_MODERATOR',
+        moderator_pubkey: cert.moderator_pubkey,
+        alias: cert.alias,
+      });
+      setModSuccess(`Revocation certificate published for ${cert.alias || cert.moderator_pubkey.slice(0, 12)}`);
+      await fetchData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to revoke moderator';
+      setError(msg);
+    } finally {
+      setModSubmitting(false);
+    }
+  };
+
+  const handleExportIdentity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (exportPassphrase.length < 8) {
+      setError('Passphrase must be at least 8 characters long');
+      return;
+    }
+    setVaultSubmitting(true);
+    setError(null);
+    setVaultSuccess(null);
+    try {
+      const bundle = await apiClient.exportIdentity(exportPassphrase);
+      setExportedBundle(bundle);
+      setVaultSuccess('Identity key successfully encrypted with PBKDF2 (600,000 rounds) + AES-GCM');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to export identity';
+      setError(msg);
+    } finally {
+      setVaultSubmitting(false);
+    }
+  };
+
+  const handleImportIdentity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!importBundleText.trim()) {
+      setError('Please paste the encrypted JSON bundle');
+      return;
+    }
+    if (!importPassphrase) {
+      setError('Passphrase is required to decrypt the key bundle');
+      return;
+    }
+    setVaultSubmitting(true);
+    setError(null);
+    setVaultSuccess(null);
+    try {
+      const bundle = JSON.parse(importBundleText.trim());
+      const res = await apiClient.importIdentity(bundle, importPassphrase);
+      setVaultSuccess(`Key successfully imported! Public key: ${res.public_key.slice(0, 16)}... Please restart ResonaMesh for changes to take effect.`);
+      setImportBundleText('');
+      setImportPassphrase('');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to import identity';
+      setError(msg);
+    } finally {
+      setVaultSubmitting(false);
+    }
+  };
+
+  const handleApplyKeyRotation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rotationJSONText.trim()) {
+      setError('Please paste the pre-signed KeyRotationEvent JSON');
+      return;
+    }
+    setVaultSubmitting(true);
+    setError(null);
+    setVaultSuccess(null);
+    try {
+      const evt = JSON.parse(rotationJSONText.trim());
+      const res = await apiClient.applyKeyRotation(evt);
+      setVaultSuccess(`Emergency key rotation applied! Event ID: #${res.event_id.slice(0, 16)}`);
+      setRotationJSONText('');
+      await fetchData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to apply key rotation';
+      setError(msg);
+    } finally {
+      setVaultSubmitting(false);
+    }
+  };
+
   const formatDate = (sec: number) => {
     if (!sec) return 'N/A';
     return new Date(sec * 1000).toLocaleString();
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Community Moderation & Policy">
+    <Modal isOpen={isOpen} onClose={onClose} title="Community Moderation & Governance" maxWidth="740px">
       <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
         {/* Navigation Tabs */}
         <div
@@ -119,26 +266,27 @@ export const ModerationModal: React.FC<ModerationModalProps> = ({ isOpen, onClos
             justifyContent: 'space-between',
             borderBottom: '1px solid var(--border-glass)',
             paddingBottom: '12px',
+            overflowX: 'auto',
           }}
         >
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '6px' }}>
             <button
               onClick={() => setActiveTab('reports')}
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
-                padding: '8px 14px',
+                gap: '6px',
+                padding: '7px 12px',
                 borderRadius: 'var(--radius-md)',
                 backgroundColor: activeTab === 'reports' ? 'var(--bg-card)' : 'transparent',
                 color: activeTab === 'reports' ? 'var(--text-primary)' : 'var(--text-secondary)',
                 border: activeTab === 'reports' ? '1px solid var(--border-glass)' : '1px solid transparent',
-                fontSize: '0.85rem',
+                fontSize: '0.82rem',
                 fontWeight: activeTab === 'reports' ? 600 : 400,
                 cursor: 'pointer',
               }}
             >
-              <FileText size={16} />
+              <FileText size={15} />
               <span>Outbox Reports</span>
               <span
                 style={{
@@ -158,18 +306,18 @@ export const ModerationModal: React.FC<ModerationModalProps> = ({ isOpen, onClos
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
-                padding: '8px 14px',
+                gap: '6px',
+                padding: '7px 12px',
                 borderRadius: 'var(--radius-md)',
                 backgroundColor: activeTab === 'blocked' ? 'var(--bg-card)' : 'transparent',
                 color: activeTab === 'blocked' ? 'var(--text-primary)' : 'var(--text-secondary)',
                 border: activeTab === 'blocked' ? '1px solid var(--border-glass)' : '1px solid transparent',
-                fontSize: '0.85rem',
+                fontSize: '0.82rem',
                 fontWeight: activeTab === 'blocked' ? 600 : 400,
                 cursor: 'pointer',
               }}
             >
-              <Ban size={16} />
+              <Ban size={15} />
               <span>Blocked Content</span>
               <span
                 style={{
@@ -190,22 +338,74 @@ export const ModerationModal: React.FC<ModerationModalProps> = ({ isOpen, onClos
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
-                padding: '8px 14px',
+                gap: '6px',
+                padding: '7px 12px',
                 borderRadius: 'var(--radius-md)',
                 backgroundColor: activeTab === 'admin' ? 'var(--bg-card)' : 'transparent',
                 color: activeTab === 'admin' ? 'var(--accent-amber)' : 'var(--text-secondary)',
                 border: activeTab === 'admin' ? '1px solid var(--border-glass)' : '1px solid transparent',
-                fontSize: '0.85rem',
+                fontSize: '0.82rem',
                 fontWeight: activeTab === 'admin' ? 600 : 400,
                 cursor: 'pointer',
               }}
             >
-              <Scale size={16} />
+              <Scale size={15} />
               <span>Admin Actions</span>
               {nodeStatus?.is_moderator && (
-                <ShieldCheck size={14} style={{ color: 'var(--accent-emerald)' }} />
+                <ShieldCheck size={13} style={{ color: 'var(--accent-emerald)' }} />
               )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('moderators')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '7px 12px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: activeTab === 'moderators' ? 'var(--bg-card)' : 'transparent',
+                color: activeTab === 'moderators' ? 'var(--accent-cyan)' : 'var(--text-secondary)',
+                border: activeTab === 'moderators' ? '1px solid var(--border-glass)' : '1px solid transparent',
+                fontSize: '0.82rem',
+                fontWeight: activeTab === 'moderators' ? 600 : 400,
+                cursor: 'pointer',
+              }}
+            >
+              <Users size={15} />
+              <span>Moderators</span>
+              <span
+                style={{
+                  padding: '2px 6px',
+                  borderRadius: 'var(--radius-full)',
+                  backgroundColor: 'rgba(6, 182, 212, 0.15)',
+                  color: 'var(--accent-cyan)',
+                  fontSize: '0.7rem',
+                  fontFamily: 'var(--font-mono)',
+                }}
+              >
+                {moderators.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('vault')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '7px 12px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: activeTab === 'vault' ? 'var(--bg-card)' : 'transparent',
+                color: activeTab === 'vault' ? 'var(--accent-emerald)' : 'var(--text-secondary)',
+                border: activeTab === 'vault' ? '1px solid var(--border-glass)' : '1px solid transparent',
+                fontSize: '0.82rem',
+                fontWeight: activeTab === 'vault' ? 600 : 400,
+                cursor: 'pointer',
+              }}
+            >
+              <KeyRound size={15} />
+              <span>Key Vault</span>
             </button>
           </div>
 
@@ -251,6 +451,44 @@ export const ModerationModal: React.FC<ModerationModalProps> = ({ isOpen, onClos
           >
             <Check size={16} />
             <span>{adminSuccess}</span>
+          </div>
+        )}
+
+        {modSuccess && (
+          <div
+            style={{
+              padding: '10px 14px',
+              backgroundColor: 'rgba(6, 182, 212, 0.1)',
+              border: '1px solid rgba(6, 182, 212, 0.3)',
+              borderRadius: 'var(--radius-md)',
+              color: 'var(--accent-cyan)',
+              fontSize: '0.82rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            <Check size={16} />
+            <span>{modSuccess}</span>
+          </div>
+        )}
+
+        {vaultSuccess && (
+          <div
+            style={{
+              padding: '10px 14px',
+              backgroundColor: 'rgba(16, 185, 129, 0.1)',
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              borderRadius: 'var(--radius-md)',
+              color: 'var(--accent-emerald)',
+              fontSize: '0.82rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            <Check size={16} />
+            <span>{vaultSuccess}</span>
           </div>
         )}
 
@@ -633,6 +871,401 @@ export const ModerationModal: React.FC<ModerationModalProps> = ({ isOpen, onClos
               </Button>
             </div>
           </form>
+        )}
+
+        {/* Tab 4: Team & Moderators */}
+        {activeTab === 'moderators' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '480px', overflowY: 'auto' }}>
+            {/* Delegation form */}
+            <form
+              onSubmit={handleDelegateModerator}
+              style={{
+                padding: '14px',
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-glass)',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-cyan)' }}>
+                <UserPlus size={16} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Appoint / Renew Delegated Moderator</span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 180px 100px', gap: '10px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Moderator Ed25519 Public Key (Hex)</label>
+                  <input
+                    type="text"
+                    value={newModPubkey}
+                    onChange={(e) => setNewModPubkey(e.target.value)}
+                    placeholder="64-character hex public key..."
+                    style={{
+                      padding: '8px 10px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: 'var(--radius-md)',
+                      color: 'var(--text-primary)',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.78rem',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Alias / Role</label>
+                  <input
+                    type="text"
+                    value={newModAlias}
+                    onChange={(e) => setNewModAlias(e.target.value)}
+                    placeholder="e.g. Alice Mod"
+                    style={{
+                      padding: '8px 10px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: 'var(--radius-md)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.82rem',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Duration (Days)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="365"
+                    value={newModDays}
+                    onChange={(e) => setNewModDays(e.target.value)}
+                    style={{
+                      padding: '8px 10px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: 'var(--radius-md)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.82rem',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '2px' }}>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  disabled={modSubmitting || !newModPubkey.trim()}
+                  icon={<UserPlus size={14} />}
+                >
+                  {modSubmitting ? 'Delegating...' : 'Approve Moderator'}
+                </Button>
+              </div>
+            </form>
+
+            {/* Moderator List */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Active & Registered Moderator Certificates ({moderators.length})
+              </span>
+
+              {moderators.length === 0 ? (
+                <div
+                  style={{
+                    padding: '30px 20px',
+                    textAlign: 'center',
+                    color: 'var(--text-muted)',
+                    fontSize: '0.85rem',
+                    border: '1px dashed var(--border-glass)',
+                    borderRadius: 'var(--radius-md)',
+                  }}
+                >
+                  No delegated moderators registered on this node.
+                </div>
+              ) : (
+                moderators.map((cert, idx) => (
+                  <div
+                    key={`${cert.moderator_pubkey}-${idx}`}
+                    style={{
+                      padding: '12px 14px',
+                      backgroundColor: 'var(--bg-card)',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: 'var(--radius-md)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '12px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+                          {cert.alias || 'Unnamed Moderator'}
+                        </span>
+                        <Badge variant={cert.action === 'APPROVE_MODERATOR' ? 'emerald' : 'rose'}>
+                          {cert.action === 'APPROVE_MODERATOR' ? 'Active Moderator' : 'Revoked'}
+                        </Badge>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        <span style={{ fontFamily: 'var(--font-mono)' }}>
+                          Key: {cert.moderator_pubkey.slice(0, 16)}...{cert.moderator_pubkey.slice(-8)}
+                        </span>
+                        <span>Expires: {formatDate(cert.expires_at)}</span>
+                      </div>
+                    </div>
+
+                    {cert.action === 'APPROVE_MODERATOR' && (
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        disabled={modSubmitting}
+                        onClick={() => handleRevokeModerator(cert)}
+                        icon={<UserX size={14} />}
+                      >
+                        Revoke
+                      </Button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 5: Key Vault */}
+        {activeTab === 'vault' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '480px', overflowY: 'auto' }}>
+            {/* Export section */}
+            <div
+              style={{
+                padding: '14px',
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-glass)',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-emerald)' }}>
+                <Download size={16} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Export Encrypted Identity Backup</span>
+              </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
+                Protects against disk failure or loss of <code>node_key.ed25519</code>. Derives an AES-256-GCM key using PBKDF2 (600,000 rounds).
+              </p>
+
+              <form onSubmit={handleExportIdentity} style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <input
+                  type="password"
+                  value={exportPassphrase}
+                  onChange={(e) => setExportPassphrase(e.target.value)}
+                  placeholder="Enter strong passphrase (min 8 chars)..."
+                  style={{
+                    flex: 1,
+                    padding: '8px 10px',
+                    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                    border: '1px solid var(--border-glass)',
+                    borderRadius: 'var(--radius-md)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.82rem',
+                    outline: 'none',
+                  }}
+                />
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  disabled={vaultSubmitting || exportPassphrase.length < 8}
+                  icon={<KeyRound size={14} />}
+                >
+                  {vaultSubmitting ? 'Encrypting...' : 'Export Key'}
+                </Button>
+              </form>
+
+              {exportedBundle && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                  <div
+                    style={{
+                      padding: '10px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: 'var(--radius-md)',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.72rem',
+                      color: 'var(--text-secondary)',
+                      wordBreak: 'break-all',
+                      maxHeight: '80px',
+                      overflowY: 'auto',
+                    }}
+                  >
+                    {JSON.stringify(exportedBundle)}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        navigator.clipboard.writeText(JSON.stringify(exportedBundle, null, 2));
+                        setCopiedExport(true);
+                        setTimeout(() => setCopiedExport(false), 2000);
+                      }}
+                      icon={copiedExport ? <Check size={14} /> : <Copy size={14} />}
+                    >
+                      {copiedExport ? 'Copied JSON!' : 'Copy Bundle JSON'}
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        const jsonStr = JSON.stringify(exportedBundle, null, 2);
+                        const blob = new Blob([jsonStr], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `resonamesh-key-backup-${exportedBundle.public_key.slice(0, 8)}.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      icon={<Download size={14} />}
+                    >
+                      Download .json File
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Import section */}
+            <form
+              onSubmit={handleImportIdentity}
+              style={{
+                padding: '14px',
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-glass)',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-amber)' }}>
+                <Key size={16} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Restore Identity Key from Encrypted Backup</span>
+              </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
+                Restores node identity. Backs up current key to <code>node_key.ed25519.bak</code> and writes new key atomically.
+              </p>
+
+              <textarea
+                value={importBundleText}
+                onChange={(e) => setImportBundleText(e.target.value)}
+                placeholder="Paste encrypted JSON bundle here..."
+                rows={2}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-md)',
+                  color: 'var(--text-primary)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.75rem',
+                  outline: 'none',
+                  resize: 'vertical',
+                }}
+              />
+
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <input
+                  type="password"
+                  value={importPassphrase}
+                  onChange={(e) => setImportPassphrase(e.target.value)}
+                  placeholder="Enter decryption passphrase..."
+                  style={{
+                    flex: 1,
+                    padding: '8px 10px',
+                    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                    border: '1px solid var(--border-glass)',
+                    borderRadius: 'var(--radius-md)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.82rem',
+                    outline: 'none',
+                  }}
+                />
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  disabled={vaultSubmitting || !importBundleText.trim() || !importPassphrase}
+                  icon={<Key size={14} />}
+                >
+                  {vaultSubmitting ? 'Importing...' : 'Restore Key'}
+                </Button>
+              </div>
+            </form>
+
+            {/* Emergency rotation section */}
+            <form
+              onSubmit={handleApplyKeyRotation}
+              style={{
+                padding: '14px',
+                backgroundColor: 'rgba(244, 63, 94, 0.05)',
+                border: '1px solid rgba(244, 63, 94, 0.25)',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent-rose)' }}>
+                <AlertTriangle size={16} />
+                <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Emergency Root Key Rotation</span>
+              </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
+                Apply an emergency key rotation signed by the offline cold Recovery Key. Broadcasts new authority to swarm peers.
+              </p>
+
+              <textarea
+                value={rotationJSONText}
+                onChange={(e) => setRotationJSONText(e.target.value)}
+                placeholder="Paste pre-signed KeyRotationEvent JSON from 'resonamesh sign-rotation'..."
+                rows={3}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-md)',
+                  color: 'var(--text-primary)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.75rem',
+                  outline: 'none',
+                  resize: 'vertical',
+                }}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button
+                  type="submit"
+                  variant="danger"
+                  size="sm"
+                  disabled={vaultSubmitting || !rotationJSONText.trim()}
+                  icon={<Send size={14} />}
+                >
+                  {vaultSubmitting ? 'Broadcasting...' : 'Broadcast Key Rotation'}
+                </Button>
+              </div>
+            </form>
+          </div>
         )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
