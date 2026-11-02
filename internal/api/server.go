@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -139,6 +140,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}", s.handleGetTrack)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}/manifest", s.handleGetManifest)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}/cover", s.handleGetTrackCover)
+	s.mux.HandleFunc("GET /api/v1/tracks/{id}/download", s.handleDownloadTrack)
+	s.mux.HandleFunc("HEAD /api/v1/tracks/{id}/download", s.handleDownloadTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/pin", s.handlePinTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/unpin", s.handleUnpinTrack)
 	s.mux.HandleFunc("DELETE /api/v1/tracks/{id}", s.handleDeleteTrack)
@@ -503,6 +506,65 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("Audio stream requested", "content_id", id, "method", r.Method, "range", r.Header.Get("Range"))
 	s.streamer.StreamTrack(w, r, id)
+}
+
+// handleDownloadTrack streams the complete audio track with Content-Disposition attachment header for direct file export.
+func (s *Server) handleDownloadTrack(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		slog.Warn("Track download request missing track id", "url", r.URL.String())
+		writeJSONError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	track, err := s.catalog.GetTrack(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to get track")
+		return
+	}
+
+	var filename string
+	artist := strings.TrimSpace(track.Artist)
+	title := strings.TrimSpace(track.Title)
+	if artist != "" && title != "" {
+		filename = fmt.Sprintf("%s - %s.mp3", artist, title)
+	} else if title != "" {
+		filename = fmt.Sprintf("%s.mp3", title)
+	} else if artist != "" {
+		filename = fmt.Sprintf("%s.mp3", artist)
+	} else {
+		filename = fmt.Sprintf("%s.mp3", id)
+	}
+	filename = SanitizeFilename(filename)
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", filename, url.PathEscape(filename)))
+	s.streamer.StreamTrack(w, r, id)
+}
+
+// SanitizeFilename cleans audio track file names for safe Content-Disposition headers.
+func SanitizeFilename(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch r {
+		case '\\', '/', ':', '*', '?', '"', '<', '>', '|':
+			b.WriteRune('_')
+		default:
+			if r < 32 {
+				b.WriteRune('_')
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	cleaned := strings.TrimSpace(b.String())
+	if cleaned == "" || cleaned == ".mp3" {
+		return "track.mp3"
+	}
+	return cleaned
 }
 
 // handleListPeers returns active P2P swarm peers discovered or connected.
