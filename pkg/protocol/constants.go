@@ -16,6 +16,10 @@ const (
 	ProtocolManifest   = "/resonamesh/manifest/1.0.0"
 	ProtocolDiscovery  = "/resonamesh/discovery/1.0.0"
 	ProtocolModeration = "/resonamesh/moderation/1.0.0"
+	ProtocolRelease    = "/resonamesh/release/1.0.0"
+
+	// Schema versions
+	SchemaReleaseV1 = "resonamesh:release:v1"
 
 	// Moderation action types
 	ActionBlock   = "BLOCK"
