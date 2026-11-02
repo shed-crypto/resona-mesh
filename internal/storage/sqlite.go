@@ -69,6 +69,7 @@ func (d *DB) migrate() error {
 		MigrationFTS5SQL,
 		MigrationModerationSQL,
 		MigrationCoverSQL,
+		MigrationGovernanceSQL,
 	}
 
 	for idx, m := range migrations {

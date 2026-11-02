@@ -65,7 +65,31 @@ if (Test-Path "bootstrap.local.json") {
     }
 }
 
+$embeddedRecoveryPubKey = ""
+$embeddedReleasePubKey = ""
+if (Test-Path "trust.local.json") {
+    try {
+        $trustJson = Get-Content "trust.local.json" -Raw | ConvertFrom-Json
+        if ($trustJson.recovery_pubkey) {
+            $embeddedRecoveryPubKey = $trustJson.recovery_pubkey
+            Write-Host "Embedding Recovery Public Key from trust.local.json" -ForegroundColor Cyan
+        }
+        if ($trustJson.release_pubkey) {
+            $embeddedReleasePubKey = $trustJson.release_pubkey
+            Write-Host "Embedding Release Public Key from trust.local.json" -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Host "Warning: Could not parse trust.local.json, skipping trust key embedding." -ForegroundColor Yellow
+    }
+}
+
 $ldflags = "-s -w -X main.AppVersion=0.1.0-alpha -X main.AppName=ResonaMesh"
+if ($embeddedRecoveryPubKey -ne "") {
+    $ldflags += " -X main.RecoveryPubKey=$embeddedRecoveryPubKey"
+}
+if ($embeddedReleasePubKey -ne "") {
+    $ldflags += " -X main.ReleasePubKey=$embeddedReleasePubKey"
+}
 if ($embeddedSeeds -ne "") {
     $ldflags += " -X main.DefaultBootstrapSeeds=$embeddedSeeds"
 }

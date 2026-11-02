@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 // CanonicalReportPayload produces a deterministic string representation of a report for signing.
@@ -60,5 +61,32 @@ func CanonicalReceiptPayload(rc *ReceiptEvent) string {
 		rc.ReportID,
 		rc.ModeratorKeyHex,
 		rc.ReceivedAt,
+	)
+}
+
+// CanonicalModeratorCertPayload produces a deterministic string representation of a moderator certificate.
+func CanonicalModeratorCertPayload(c *ModeratorCertificate) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%d|%d|%s",
+		c.NetworkID,
+		c.Action,
+		strings.ToLower(c.ModeratorPubKey),
+		c.Alias,
+		c.IssuedAt,
+		c.ExpiresAt,
+		strings.ToLower(c.RootAdminPubKey),
+	)
+}
+
+// CanonicalKeyRotationPayload produces a deterministic string representation of a key rotation event.
+func CanonicalKeyRotationPayload(r *KeyRotationEvent) string {
+	return fmt.Sprintf("%s|%s|%d|%s|%s|%s|%s|%d",
+		r.NetworkID,
+		r.KeyRole,
+		r.NewPolicyEpoch,
+		strings.ToLower(r.OldPubKey),
+		strings.ToLower(r.NewPubKey),
+		strings.ToLower(r.RecoveryPubKey),
+		r.Reason,
+		r.IssuedAt,
 	)
 }

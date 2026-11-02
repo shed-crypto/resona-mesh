@@ -187,3 +187,26 @@ func TestLoadOrCreatePrivateKey(t *testing.T) {
 	}
 }
 
+func TestSavePrivateKey(t *testing.T) {
+	tempDir := t.TempDir()
+	keyPath := filepath.Join(tempDir, "sub", "saved_node.key")
+
+	_, priv, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate key pair: %v", err)
+	}
+
+	if err := crypto.SavePrivateKey(keyPath, priv); err != nil {
+		t.Fatalf("failed to save private key: %v", err)
+	}
+
+	loaded, err := crypto.LoadOrCreatePrivateKey(keyPath)
+	if err != nil {
+		t.Fatalf("failed to load saved private key: %v", err)
+	}
+
+	if !bytes.Equal(priv, loaded) {
+		t.Fatal("loaded key does not match saved key")
+	}
+}
+

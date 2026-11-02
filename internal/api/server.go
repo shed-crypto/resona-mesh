@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -158,6 +160,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/moderation/decisions", s.handleListDecisions)
 	s.mux.HandleFunc("POST /api/v1/moderation/decisions", s.handleCreateDecision)
 	s.mux.HandleFunc("GET /api/v1/moderation/blocked", s.handleListBlocked)
+	s.mux.HandleFunc("GET /api/v1/moderation/moderators", s.handleListModerators)
+	s.mux.HandleFunc("POST /api/v1/moderation/moderators", s.handleDelegateModerator)
+	s.mux.HandleFunc("POST /api/v1/moderation/key-rotations", s.handleApplyKeyRotation)
+	s.mux.HandleFunc("POST /api/v1/identity/export", s.handleExportIdentity)
+	s.mux.HandleFunc("POST /api/v1/identity/import", s.handleImportIdentity)
 
 	if s.cfg.Headless {
 		s.mux.HandleFunc("GET /", s.handleHeadlessStatusPage)
@@ -948,6 +955,187 @@ func (s *Server) handleListBlocked(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"items": blocked,
 		"total": len(blocked),
+	})
+}
+
+type ExportIdentityRequest struct {
+	Passphrase string `json:"passphrase"`
+}
+
+type ImportIdentityRequest struct {
+	Bundle     json.RawMessage `json:"bundle"`
+	Passphrase string          `json:"passphrase"`
+}
+
+type DelegateModeratorRequest struct {
+	Action          string `json:"action"` // "APPROVE_MODERATOR" or "REVOKE_MODERATOR"
+	ModeratorPubKey string `json:"moderator_pubkey"`
+	Alias           string `json:"alias"`
+	DurationSec     int64  `json:"duration_sec"`
+}
+
+// handleListModerators returns all active and historical moderator certificates.
+func (s *Server) handleListModerators(w http.ResponseWriter, r *http.Request) {
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	certs, err := s.moderationEngine.ListModeratorCertificates(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if certs == nil {
+		certs = []protocol.ModeratorCertificate{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items": certs,
+		"total": len(certs),
+	})
+}
+
+// handleDelegateModerator delegates or revokes moderator privileges.
+func (s *Server) handleDelegateModerator(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "moderator delegation is disabled in headless mode")
+		return
+	}
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	var req DelegateModeratorRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Action != "APPROVE_MODERATOR" && req.Action != "REVOKE_MODERATOR" {
+		writeJSONError(w, http.StatusBadRequest, "action must be APPROVE_MODERATOR or REVOKE_MODERATOR")
+		return
+	}
+	if req.ModeratorPubKey == "" {
+		writeJSONError(w, http.StatusBadRequest, "moderator_pubkey is required")
+		return
+	}
+
+	cert, err := s.moderationEngine.DelegateModerator(r.Context(), req.Action, req.ModeratorPubKey, req.Alias, req.DurationSec)
+	if err != nil {
+		if errors.Is(err, moderation.ErrUntrustedModerator) {
+			writeJSONError(w, http.StatusForbidden, "node is not configured with root admin credentials")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, cert)
+}
+
+// handleApplyKeyRotation verifies and records a root admin or release key rotation.
+func (s *Server) handleApplyKeyRotation(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "key rotation submission is disabled in headless mode")
+		return
+	}
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	var evt protocol.KeyRotationEvent
+	if err := json.NewDecoder(r.Body).Decode(&evt); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid key rotation event json")
+		return
+	}
+
+	if err := s.moderationEngine.ApplyKeyRotation(r.Context(), &evt); err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("failed to apply key rotation: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":   "applied",
+		"event_id": evt.EventID,
+	})
+}
+
+// handleExportIdentity exports the local node private key inside an encrypted PBKDF2+AES-GCM bundle.
+func (s *Server) handleExportIdentity(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "identity export is disabled in headless mode")
+		return
+	}
+	if s.publisherKey == nil {
+		writeJSONError(w, http.StatusInternalServerError, "node identity private key is unavailable")
+		return
+	}
+
+	var req ExportIdentityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Passphrase) < 8 {
+		writeJSONError(w, http.StatusBadRequest, "passphrase must be at least 8 characters")
+		return
+	}
+
+	bundle, err := crypto.ExportEncryptedKey(s.publisherKey, req.Passphrase)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to export encrypted key: %v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(bundle)
+}
+
+// handleImportIdentity restores an identity key from an encrypted bundle, updating node_key.ed25519.
+func (s *Server) handleImportIdentity(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "identity import is disabled in headless mode")
+		return
+	}
+
+	var req ImportIdentityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Passphrase == "" {
+		writeJSONError(w, http.StatusBadRequest, "passphrase is required")
+		return
+	}
+
+	privKey, err := crypto.ImportEncryptedKey(req.Bundle, req.Passphrase)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid passphrase or corrupted key bundle: %v", err))
+		return
+	}
+
+	keyPath := filepath.Join(s.cfg.DataDir, "node_key.ed25519")
+	bakPath := filepath.Join(s.cfg.DataDir, "node_key.ed25519.bak")
+
+	// Backup current key if it exists
+	if oldData, err := os.ReadFile(keyPath); err == nil {
+		_ = os.WriteFile(bakPath, oldData, 0600)
+	}
+
+	// Atomically save imported private key
+	if err := crypto.SavePrivateKey(keyPath, privKey); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save imported key: %v", err))
+		return
+	}
+
+	pubKey := privKey.Public().(ed25519.PublicKey)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":           "imported",
+		"restart_required": true,
+		"public_key":       crypto.PublicKeyToHex(pubKey),
 	})
 }
 

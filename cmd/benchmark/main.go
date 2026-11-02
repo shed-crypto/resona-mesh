@@ -458,17 +458,17 @@ func runE3(csvPath string) {
 		_ = nodeClient.host.Connect(ctx, nodeModerator.host.AddrInfo())
 
 		t0 := time.Now()
-		decisions, err := nodeClient.modHandler.SyncDecisions(ctx, nodeModerator.host.ID(), 0)
+		syncResp, err := nodeClient.modHandler.SyncDecisions(ctx, nodeModerator.host.ID(), 0)
 		syncLatencyMs := time.Since(t0).Milliseconds()
-		if err == nil {
-			for _, d := range decisions {
+		if err == nil && syncResp != nil {
+			for _, d := range syncResp.Decisions {
 				_ = nodeClient.modEngine.ApplyDecision(ctx, d)
 			}
 		}
 
 		convergence := "CONVERGED"
 		failureReason := "NONE"
-		if err != nil || len(decisions) == 0 {
+		if err != nil || syncResp == nil || len(syncResp.Decisions) == 0 {
 			convergence = "DESYNC"
 			failureReason = "SYNC_FAILED"
 		}

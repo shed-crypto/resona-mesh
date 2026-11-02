@@ -1,6 +1,29 @@
 import type { Track, Manifest, TrackListResponse, Report, Decision, BlockedItem } from '../../types/track';
 import type { NodeStatus, PeerRecord, StorageUsage, NodeSettings } from '../../types/node';
 
+export interface ModeratorCertificate {
+  schema_version: string;
+  network_id: string;
+  action: 'APPROVE_MODERATOR' | 'REVOKE_MODERATOR';
+  moderator_pubkey: string;
+  alias: string;
+  issued_at: number;
+  expires_at: number;
+  admin_pubkey: string;
+  signature: string;
+}
+
+export interface EncryptedKeyBundle {
+  version: number;
+  kdf: string;
+  iterations: number;
+  salt: string;
+  nonce: string;
+  ciphertext: string;
+  public_key: string;
+  created_at: number;
+}
+
 const API_BASE = '/api/v1';
 
 export const apiClient = {
@@ -199,6 +222,71 @@ export const apiClient = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || 'Failed to execute moderation decision');
+    }
+    return res.json();
+  },
+
+  async getModerators(): Promise<{ items: ModeratorCertificate[]; total: number }> {
+    const res = await fetch(`${API_BASE}/moderation/moderators`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch moderators: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async delegateModerator(params: {
+    action: 'APPROVE_MODERATOR' | 'REVOKE_MODERATOR';
+    moderator_pubkey: string;
+    alias?: string;
+    duration_sec?: number;
+  }): Promise<ModeratorCertificate> {
+    const res = await fetch(`${API_BASE}/moderation/moderators`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to update moderator status');
+    }
+    return res.json();
+  },
+
+  async exportIdentity(passphrase: string): Promise<EncryptedKeyBundle> {
+    const res = await fetch(`${API_BASE}/identity/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to export identity');
+    }
+    return res.json();
+  },
+
+  async importIdentity(bundle: EncryptedKeyBundle, passphrase: string): Promise<{ status: string; restart_required: boolean; public_key: string }> {
+    const res = await fetch(`${API_BASE}/identity/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bundle, passphrase }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to import identity');
+    }
+    return res.json();
+  },
+
+  async applyKeyRotation(event: any): Promise<{ status: string; event_id: string }> {
+    const res = await fetch(`${API_BASE}/moderation/key-rotations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to apply key rotation');
     }
     return res.json();
   },
