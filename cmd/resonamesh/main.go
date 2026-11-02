@@ -271,8 +271,9 @@ func main() {
 	// Probe STUN over the shared QUIC UDP socket prior to bootstrap so the first Identify
 	// handshake advertises the true external NAT-mapped UDP port and starts keepalive pinholing.
 	if !cfg.Headless {
+		p2p.SetDefaultSTUNServers(cfg.STUNServers)
 		stunCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
-		if diag, err := p2pHost.ProbeAndAdvertiseNAT(stunCtx, nil); err == nil && diag != nil {
+		if diag, err := p2pHost.ProbeAndAdvertiseNAT(stunCtx, cfg.STUNServers); err == nil && diag != nil {
 			slog.Info("Resolved public WAN endpoint on shared QUIC socket via STUN",
 				"public_ip", diag.PublicIP.String(),
 				"primary_udp_port", diag.PrimaryPort,
@@ -283,7 +284,7 @@ func main() {
 			slog.Debug("Initial STUN probe notice", "error", err)
 		}
 		cancel()
-		p2pHost.StartSTUNKeepAlive(ctx, nil, 25*time.Second)
+		p2pHost.StartSTUNKeepAlive(ctx, cfg.STUNServers, 25*time.Second)
 	}
 
 	// Register universal swarm network connection listener
