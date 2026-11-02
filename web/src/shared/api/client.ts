@@ -295,6 +295,10 @@ export const apiClient = {
     return `${API_BASE}/stream/${id}`;
   },
 
+  getDownloadUrl(id: string): string {
+    return `${API_BASE}/tracks/${id}/download`;
+  },
+
   getCoverUrl(id: string): string {
     return `${API_BASE}/tracks/${id}/cover`;
   },
