@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
+	"resonamesh/internal/updater"
 	"resonamesh/pkg/crypto"
 	"resonamesh/pkg/protocol"
 )
@@ -1220,3 +1222,158 @@ func TestAPITrackDownloadSanitizationAndNotFound(t *testing.T) {
 
 
 
+
+
+func TestAPIUpdaterEndpoints(t *testing.T) {
+	server, tmpDir := createTestAPIServer(t)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	// 1. Without updater configured: returns idle status
+	resp, err := http.Get(ts.URL + "/api/v1/updater/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for updater status, got %d", resp.StatusCode)
+	}
+
+	var state updater.State
+	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != updater.StatusIdle {
+		t.Fatalf("expected initial status idle, got %s", state.Status)
+	}
+
+	// 2. Configure updater on server
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubHex := crypto.PublicKeyToHex(pub)
+
+	bs, err := storage.NewBlockStore(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetExe := filepath.Join(tmpDir, "current-resonamesh.exe")
+	if err := os.WriteFile(targetExe, []byte("V1_BINARY"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	eng, err := updater.NewEngine(updater.Config{
+		CurrentVersion: "0.1.0-alpha",
+		ExecutablePath: targetExe,
+		ReleasePubKey:  pubHex,
+		DataDir:        tmpDir,
+		BlockStore:     bs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.SetUpdater(eng)
+
+	// 3. Status with engine attached
+	resp, err = http.Get(ts.URL + "/api/v1/updater/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	_ = json.NewDecoder(resp.Body).Decode(&state)
+	if state.CurrentVersion != "0.1.0-alpha" {
+		t.Fatalf("expected 0.1.0-alpha, got %s", state.CurrentVersion)
+	}
+
+	// 4. Download before release available returns 400 Bad Request
+	dlResp, err := http.Post(ts.URL+"/api/v1/updater/download", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dlResp.Body.Close()
+	if dlResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request when downloading with no available release, got %d", dlResp.StatusCode)
+	}
+
+	// 5. Create valid release binary and manifest
+	sourceBin := filepath.Join(tmpDir, "source-v0.2.0.exe")
+	if err := os.WriteFile(sourceBin, []byte("V2_NEW_BINARY_DATA"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, err := eng.CreateRelease(sourceBin, "0.2.0", "New release notes", priv)
+	if err != nil {
+		t.Fatalf("CreateRelease failed: %v", err)
+	}
+
+	// Announce release to client engine
+	accepted, err := eng.ProcessAnnouncedRelease(manifest)
+	if err != nil || !accepted {
+		t.Fatalf("ProcessAnnouncedRelease failed: %v (accepted=%v)", err, accepted)
+	}
+
+	// 6. Status now available
+	resp, err = http.Get(ts.URL + "/api/v1/updater/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	_ = json.NewDecoder(resp.Body).Decode(&state)
+	if state.Status != updater.StatusAvailable {
+		t.Fatalf("expected available status, got %s", state.Status)
+	}
+
+	// 7. Synchronously download release
+	if err := eng.DownloadRelease(context.Background()); err != nil {
+		t.Fatalf("DownloadRelease failed: %v", err)
+	}
+
+	// 8. Apply update via POST /api/v1/updater/apply
+	applyResp, err := http.Post(ts.URL+"/api/v1/updater/apply", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer applyResp.Body.Close()
+	if applyResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for apply, got %d", applyResp.StatusCode)
+	}
+
+	var applyResult struct {
+		Status          string `json:"status"`
+		RestartRequired bool   `json:"restart_required"`
+	}
+	_ = json.NewDecoder(applyResp.Body).Decode(&applyResult)
+	if !applyResult.RestartRequired || applyResult.Status != "applied" {
+		t.Fatalf("unexpected apply result: %+v", applyResult)
+	}
+
+	// 9. Verify target binary replaced with new content
+	newContent, err := os.ReadFile(targetExe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(newContent) != "V2_NEW_BINARY_DATA" {
+		t.Fatalf("expected new binary data, got: %s", string(newContent))
+	}
+
+	// 10. Rollback via POST /api/v1/updater/rollback
+	rbResp, err := http.Post(ts.URL+"/api/v1/updater/rollback", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rbResp.Body.Close()
+	if rbResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for rollback, got %d", rbResp.StatusCode)
+	}
+
+	restoredContent, err := os.ReadFile(targetExe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restoredContent) != "V1_BINARY" {
+		t.Fatalf("expected restored initial binary, got: %s", string(restoredContent))
+	}
+}

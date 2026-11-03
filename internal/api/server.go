@@ -26,6 +26,7 @@ import (
 	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
+	"resonamesh/internal/updater"
 	"resonamesh/pkg/crypto"
 	"resonamesh/pkg/protocol"
 	"resonamesh/web"
@@ -50,6 +51,8 @@ type Server struct {
 	p2pHost          *p2p.Host
 	moderationEngine *moderation.Engine
 	moderatorKey     ed25519.PrivateKey
+	updaterEngine    *updater.Engine
+	releaseHandler   *p2p.ReleaseHandler
 	publisherKey     ed25519.PrivateKey
 	startTime        time.Time
 	mux              *http.ServeMux
@@ -135,6 +138,17 @@ func (s *Server) SetModerationEngine(eng *moderation.Engine, modKey ed25519.Priv
 	s.moderatorKey = modKey
 }
 
+// SetUpdater binds the auto-updater engine for client upgrade management.
+func (s *Server) SetUpdater(u *updater.Engine) {
+	s.updaterEngine = u
+}
+
+// SetReleaseHandler binds the P2P release handler for swarm release propagation.
+func (s *Server) SetReleaseHandler(rh *p2p.ReleaseHandler) {
+	s.releaseHandler = rh
+}
+
+
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tracks", s.handleListTracks)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}", s.handleGetTrack)
@@ -166,6 +180,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/moderation/moderators", s.handleListModerators)
 	s.mux.HandleFunc("POST /api/v1/moderation/moderators", s.handleDelegateModerator)
 	s.mux.HandleFunc("POST /api/v1/moderation/key-rotations", s.handleApplyKeyRotation)
+	s.mux.HandleFunc("GET /api/v1/updater/status", s.handleUpdaterStatus)
+	s.mux.HandleFunc("POST /api/v1/updater/check", s.handleUpdaterCheck)
+	s.mux.HandleFunc("POST /api/v1/updater/download", s.handleUpdaterDownload)
+	s.mux.HandleFunc("POST /api/v1/updater/apply", s.handleUpdaterApply)
+	s.mux.HandleFunc("POST /api/v1/updater/rollback", s.handleUpdaterRollback)
+
 	s.mux.HandleFunc("POST /api/v1/identity/export", s.handleExportIdentity)
 	s.mux.HandleFunc("POST /api/v1/identity/import", s.handleImportIdentity)
 
@@ -1545,3 +1565,94 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
 	_, _ = w.Write([]byte(html))
 }
 
+
+
+// handleUpdaterStatus returns current updater telemetry, available releases, and download progress.
+func (s *Server) handleUpdaterStatus(w http.ResponseWriter, r *http.Request) {
+	if s.updaterEngine == nil {
+		writeJSON(w, http.StatusOK, updater.State{
+			Status:         updater.StatusIdle,
+			CurrentVersion: AppVersion,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.updaterEngine.State())
+}
+
+// handleUpdaterCheck queries connected swarm peers for newer release manifests.
+func (s *Server) handleUpdaterCheck(w http.ResponseWriter, r *http.Request) {
+	if s.releaseHandler != nil {
+		_, _ = s.releaseHandler.QueryAllPeers(r.Context())
+	}
+	if s.updaterEngine == nil {
+		writeJSON(w, http.StatusOK, updater.State{
+			Status:         updater.StatusIdle,
+			CurrentVersion: AppVersion,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.updaterEngine.State())
+}
+
+// handleUpdaterDownload triggers the download and verification of available release chunks.
+func (s *Server) handleUpdaterDownload(w http.ResponseWriter, r *http.Request) {
+	if s.updaterEngine == nil {
+		writeJSONError(w, http.StatusBadRequest, "updater not configured")
+		return
+	}
+
+	state := s.updaterEngine.State()
+	if state.Status != updater.StatusAvailable && state.Status != updater.StatusError {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("cannot download in status %s", state.Status))
+		return
+	}
+
+	// Trigger download in background context so HTTP call returns immediately with accepted status
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		if err := s.updaterEngine.DownloadRelease(ctx); err != nil {
+			slog.Error("Background release download failed", "error", err)
+		}
+	}()
+
+	writeJSON(w, http.StatusAccepted, s.updaterEngine.State())
+}
+
+// handleUpdaterApply executes the atomic binary replacement and signals restart requirement.
+func (s *Server) handleUpdaterApply(w http.ResponseWriter, r *http.Request) {
+	if s.updaterEngine == nil {
+		writeJSONError(w, http.StatusBadRequest, "updater not configured")
+		return
+	}
+
+	if err := s.updaterEngine.ApplyUpdate(); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to apply update: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":           "applied",
+		"restart_required": true,
+		"message":          "Update applied successfully. Please restart ResonaMesh to run the new version.",
+	})
+}
+
+// handleUpdaterRollback restores the previous executable backup.
+func (s *Server) handleUpdaterRollback(w http.ResponseWriter, r *http.Request) {
+	if s.updaterEngine == nil {
+		writeJSONError(w, http.StatusBadRequest, "updater not configured")
+		return
+	}
+
+	if err := s.updaterEngine.Rollback(); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to rollback: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":           "rolled_back",
+		"restart_required": true,
+		"message":          "Previous binary restored successfully.",
+	})
+}
