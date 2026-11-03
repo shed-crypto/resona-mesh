@@ -192,3 +192,35 @@ func TestModeratorKeyCLIOverride(t *testing.T) {
 
 
 
+
+
+func TestReleasePubKeyResolution(t *testing.T) {
+	// 1. Default should be empty
+	cfgDefault, err := config.Load("", []string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfgDefault.ReleasePubKey != "" {
+		t.Fatalf("expected empty default release pubkey, got: %s", cfgDefault.ReleasePubKey)
+	}
+
+	// 2. Env var
+	t.Setenv("RESONAMESH_RELEASE_PUBKEY", "aaaa111122223333aaaa111122223333aaaa111122223333aaaa111122223333")
+	cfgEnv, err := config.Load("", []string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfgEnv.ReleasePubKey != "aaaa111122223333aaaa111122223333aaaa111122223333aaaa111122223333" {
+		t.Fatalf("expected env release pubkey, got: %s", cfgEnv.ReleasePubKey)
+	}
+
+	// 3. CLI flag override
+	cliArgs := []string{"--release-pubkey", "bbbb111122223333bbbb111122223333bbbb111122223333bbbb111122223333"}
+	cfgCLI, err := config.Load("", cliArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfgCLI.ReleasePubKey != "bbbb111122223333bbbb111122223333bbbb111122223333bbbb111122223333" {
+		t.Fatalf("expected CLI release pubkey override, got: %s", cfgCLI.ReleasePubKey)
+	}
+}

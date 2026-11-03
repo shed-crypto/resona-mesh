@@ -13,6 +13,24 @@ export interface ModeratorCertificate {
   signature: string;
 }
 
+
+
+export interface UpdateState {
+  status: 'idle' | 'available' | 'downloading' | 'ready_to_restart' | 'error';
+  current_version: string;
+  available_release?: {
+    version: string;
+    target_os: string;
+    target_arch: string;
+    total_size_bytes: number;
+    release_notes?: string;
+    published_at: number;
+  };
+  progress_pct: number;
+  downloaded_blocks: number;
+  total_blocks: number;
+  error_message?: string;
+}
 export interface EncryptedKeyBundle {
   version: number;
   kdf: string;
@@ -287,6 +305,50 @@ export const apiClient = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || 'Failed to apply key rotation');
+    }
+    return res.json();
+  },
+
+
+  async getUpdaterStatus(): Promise<UpdateState> {
+    const res = await fetch(`${API_BASE}/updater/status`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch updater status: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async checkUpdate(): Promise<UpdateState> {
+    const res = await fetch(`${API_BASE}/updater/check`, { method: 'POST' });
+    if (!res.ok) {
+      throw new Error(`Failed to check for updates: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async downloadUpdate(): Promise<UpdateState> {
+    const res = await fetch(`${API_BASE}/updater/download`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to start update download');
+    }
+    return res.json();
+  },
+
+  async applyUpdate(): Promise<{ status: string; restart_required: boolean; message: string }> {
+    const res = await fetch(`${API_BASE}/updater/apply`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to apply update');
+    }
+    return res.json();
+  },
+
+  async rollbackUpdate(): Promise<{ status: string; restart_required: boolean; message: string }> {
+    const res = await fetch(`${API_BASE}/updater/rollback`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to rollback update');
     }
     return res.json();
   },
