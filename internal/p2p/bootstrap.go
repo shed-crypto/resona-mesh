@@ -241,20 +241,31 @@ func BootstrapSwarm(ctx context.Context, h *Host, tracker *PeerTracker, seeds []
 }
 
 // StartBootstrapLoop runs periodic bootstrap discovery in the background until the context cancels.
-func StartBootstrapLoop(ctx context.Context, h *Host, tracker *PeerTracker, seeds []string, interval time.Duration, onConnected func(peer.ID)) {
+// If the swarm has at least minSwarmPeers connected peers, it enters dormant mode and skips querying bootstrap seeds.
+func StartBootstrapLoop(ctx context.Context, h *Host, tracker *PeerTracker, seeds []string, interval time.Duration, minSwarmPeers int, onConnected func(peer.ID)) {
 	if len(seeds) == 0 {
 		return
 	}
 	if interval <= 0 {
 		interval = DefaultBootstrapInterval
 	}
+	if minSwarmPeers <= 0 {
+		minSwarmPeers = 3
+	}
 
 	go func() {
-		// Initial resolution pass
-		if count, err := BootstrapSwarm(ctx, h, tracker, seeds, onConnected); err != nil {
-			slog.Warn("Initial bootstrap swarm pass encountered an issue", "error", err)
-		} else if count > 0 {
-			slog.Info("Initial bootstrap pass connected peers", "count", count)
+		// Initial resolution pass (only runs if swarm is under minSwarmPeers threshold)
+		if len(h.ConnectedPeers()) < minSwarmPeers {
+			if count, err := BootstrapSwarm(ctx, h, tracker, seeds, onConnected); err != nil {
+				slog.Warn("Initial bootstrap swarm pass encountered an issue", "error", err)
+			} else if count > 0 {
+				slog.Info("Initial bootstrap pass connected peers", "count", count)
+			}
+		} else {
+			slog.Info("Swarm already has sufficient connected peers; bootstrap seeds remain dormant",
+				"connected", len(h.ConnectedPeers()),
+				"min_peers", minSwarmPeers,
+			)
 		}
 
 		for {
@@ -268,6 +279,15 @@ func StartBootstrapLoop(ctx context.Context, h *Host, tracker *PeerTracker, seed
 				timer.Stop()
 				return
 			case <-timer.C:
+				// Dormant Bootstrap Policy: do not poll/dial seed server if already connected to sufficient peers
+				if len(h.ConnectedPeers()) >= minSwarmPeers {
+					slog.Debug("Swarm peer threshold satisfied; keeping bootstrap seeds dormant",
+						"connected", len(h.ConnectedPeers()),
+						"min_peers", minSwarmPeers,
+					)
+					continue
+				}
+
 				if count, err := BootstrapSwarm(ctx, h, tracker, seeds, onConnected); err != nil {
 					slog.Debug("Periodic bootstrap refresh encountered an issue", "error", err)
 				} else if count > 0 {

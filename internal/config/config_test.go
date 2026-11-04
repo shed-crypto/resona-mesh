@@ -224,3 +224,84 @@ func TestReleasePubKeyResolution(t *testing.T) {
 		t.Fatalf("expected CLI release pubkey override, got: %s", cfgCLI.ReleasePubKey)
 	}
 }
+
+func TestRelayAndPeerConfiguration(t *testing.T) {
+	// 1. Defaults
+	cfgDef, err := config.Load("", nil)
+	if err != nil {
+		t.Fatalf("failed to load default config: %v", err)
+	}
+	if cfgDef.RelayMode != config.RelayModeCoordinator {
+		t.Errorf("expected default RelayMode %s, got %s", config.RelayModeCoordinator, cfgDef.RelayMode)
+	}
+	if cfgDef.RelayMaxReservations != 16 {
+		t.Errorf("expected default RelayMaxReservations 16, got %d", cfgDef.RelayMaxReservations)
+	}
+	if cfgDef.RelayMaxCircuits != 4 {
+		t.Errorf("expected default RelayMaxCircuits 4, got %d", cfgDef.RelayMaxCircuits)
+	}
+	if cfgDef.MinSwarmPeers != 3 {
+		t.Errorf("expected default MinSwarmPeers 3, got %d", cfgDef.MinSwarmPeers)
+	}
+	if cfgDef.MaxSwarmPeers != 32 {
+		t.Errorf("expected default MaxSwarmPeers 32, got %d", cfgDef.MaxSwarmPeers)
+	}
+
+	// 2. Env variables
+	t.Setenv("RESONAMESH_RELAY_MODE", "transit")
+	t.Setenv("RESONAMESH_RELAY_MAX_RESERVATIONS", "32")
+	t.Setenv("RESONAMESH_MIN_SWARM_PEERS", "5")
+	t.Setenv("RESONAMESH_MAX_SWARM_PEERS", "64")
+	cfgEnv, err := config.Load("", nil)
+	if err != nil {
+		t.Fatalf("failed to load config with env vars: %v", err)
+	}
+	if cfgEnv.RelayMode != config.RelayModeTransit {
+		t.Errorf("expected RelayMode %s, got %s", config.RelayModeTransit, cfgEnv.RelayMode)
+	}
+	if cfgEnv.RelayMaxReservations != 32 {
+		t.Errorf("expected RelayMaxReservations 32, got %d", cfgEnv.RelayMaxReservations)
+	}
+	if cfgEnv.MinSwarmPeers != 5 {
+		t.Errorf("expected MinSwarmPeers 5, got %d", cfgEnv.MinSwarmPeers)
+	}
+	if cfgEnv.MaxSwarmPeers != 64 {
+		t.Errorf("expected MaxSwarmPeers 64, got %d", cfgEnv.MaxSwarmPeers)
+	}
+
+	// 3. CLI flag overrides
+	flags := []string{
+		"--relay-mode", "pex-only",
+		"--relay-max-reservations", "8",
+		"--min-swarm-peers", "4",
+		"--max-swarm-peers", "20",
+	}
+	cfgCLI, err := config.Load("", flags)
+	if err != nil {
+		t.Fatalf("failed to load config with CLI flags: %v", err)
+	}
+	if cfgCLI.RelayMode != config.RelayModePEXOnly {
+		t.Errorf("expected RelayMode %s, got %s", config.RelayModePEXOnly, cfgCLI.RelayMode)
+	}
+	if cfgCLI.RelayMaxReservations != 8 {
+		t.Errorf("expected RelayMaxReservations 8, got %d", cfgCLI.RelayMaxReservations)
+	}
+	if cfgCLI.MinSwarmPeers != 4 {
+		t.Errorf("expected MinSwarmPeers 4, got %d", cfgCLI.MinSwarmPeers)
+	}
+	if cfgCLI.MaxSwarmPeers != 20 {
+		t.Errorf("expected MaxSwarmPeers 20, got %d", cfgCLI.MaxSwarmPeers)
+	}
+
+	// 4. Invalid relay mode
+	_, errInvalidMode := config.Load("", []string{"--relay-mode", "invalid-mode"})
+	if errInvalidMode != config.ErrInvalidRelayMode {
+		t.Fatalf("expected ErrInvalidRelayMode, got: %v", errInvalidMode)
+	}
+
+	// 5. Invalid peer bounds (max < min)
+	_, errInvalidBounds := config.Load("", []string{"--min-swarm-peers", "10", "--max-swarm-peers", "5"})
+	if errInvalidBounds != config.ErrInvalidPeerBounds {
+		t.Fatalf("expected ErrInvalidPeerBounds, got: %v", errInvalidBounds)
+	}
+}
