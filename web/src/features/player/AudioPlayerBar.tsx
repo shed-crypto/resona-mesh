@@ -85,11 +85,50 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   onClearQueue,
 }) => {
   const [isQueueOpen, setIsQueueOpen] = useState(false);
-const [isLyricsOpen, setIsLyricsOpen] = useState(false);
+  const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isEqOpen, setIsEqOpen] = useState(false);
   const [isRateMenuOpen, setIsRateMenuOpen] = useState(false);
   const [isSleepMenuOpen, setIsSleepMenuOpen] = useState(false);
   const [isFullscreenOpen, setIsFullscreenOpen] = useState(false);
+
+  const closeAllPopups = () => {
+    setIsLyricsOpen(false);
+    setIsEqOpen(false);
+    setIsQueueOpen(false);
+    setIsRateMenuOpen(false);
+    setIsSleepMenuOpen(false);
+  };
+
+  const toggleLyrics = () => {
+    const next = !isLyricsOpen;
+    closeAllPopups();
+    setIsLyricsOpen(next);
+  };
+
+  const toggleEq = () => {
+    const next = !isEqOpen;
+    closeAllPopups();
+    setIsEqOpen(next);
+  };
+
+  const toggleQueue = () => {
+    const next = !isQueueOpen;
+    closeAllPopups();
+    setIsQueueOpen(next);
+  };
+
+  const toggleRateMenu = () => {
+    const next = !isRateMenuOpen;
+    closeAllPopups();
+    setIsRateMenuOpen(next);
+  };
+
+  const toggleSleepMenu = () => {
+    const next = !isSleepMenuOpen;
+    closeAllPopups();
+    setIsSleepMenuOpen(next);
+  };
+
   const eq = useAudioEqualizer(audioElement ?? null);
   const sleepTimer = useSleepTimer(
     audioElement ?? null,
@@ -344,15 +383,26 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
           justifyContent: 'space-between',
           padding: '0 24px',
           zIndex: 100,
-          gap: '24px',
+          gap: '16px',
         }}
       >
-        {/* Left: Track Information with Procedural Vinyl Art */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '280px', minWidth: '200px' }}>
+        {/* Left: Track Information with Artwork & Stream Status */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            width: '260px',
+            minWidth: '180px',
+            maxWidth: '280px',
+            flexShrink: 0,
+            overflow: 'hidden',
+          }}
+        >
           <div
             style={{
-              width: '48px',
-              height: '48px',
+              width: '46px',
+              height: '46px',
               borderRadius: 'var(--radius-md)',
               overflow: 'hidden',
               border: isPlaying ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
@@ -370,32 +420,105 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
           </div>
-          <div style={{ overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span
-                style={{
-                  fontSize: '0.9rem',
-                  fontWeight: 600,
-                  color: 'var(--text-primary)',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {currentTrack.title}
-              </span>
-            </div>
+          <div style={{ overflow: 'hidden', minWidth: 0, flex: 1 }}>
             <div
               style={{
-                fontSize: '0.78rem',
-                color: 'var(--text-secondary)',
+                fontSize: '0.88rem',
+                fontWeight: 600,
+                color: 'var(--text-primary)',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
-                marginTop: '2px',
+              }}
+              title={currentTrack.title}
+            >
+              {currentTrack.title}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                marginTop: '3px',
               }}
             >
-              {currentTrack.artist}
+              <span
+                style={{
+                  fontSize: '0.74rem',
+                  color: 'var(--text-secondary)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  maxWidth: '120px',
+                }}
+                title={currentTrack.artist}
+              >
+                {currentTrack.artist}
+              </span>
+              {isStalled ? (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '3px',
+                    fontSize: '0.65rem',
+                    color: 'var(--accent-rose)',
+                    backgroundColor: 'rgba(244, 63, 94, 0.12)',
+                    border: '1px solid rgba(244, 63, 94, 0.25)',
+                    padding: '1px 6px',
+                    borderRadius: 'var(--radius-full)',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  <WifiOff size={10} /> Stalled
+                </span>
+              ) : isBuffering ? (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '0.65rem',
+                    color: 'var(--accent-cyan)',
+                    backgroundColor: 'rgba(6, 182, 212, 0.12)',
+                    border: '1px solid rgba(6, 182, 212, 0.25)',
+                    padding: '1px 6px',
+                    borderRadius: 'var(--radius-full)',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> Buffering
+                </span>
+              ) : (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '0.65rem',
+                    color: 'var(--accent-emerald)',
+                    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                    border: '1px solid rgba(16, 185, 129, 0.25)',
+                    padding: '1px 6px',
+                    borderRadius: 'var(--radius-full)',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: '5px',
+                      height: '5px',
+                      borderRadius: '50%',
+                      backgroundColor: 'var(--accent-emerald)',
+                      boxShadow: '0 0 6px var(--accent-emerald)',
+                    }}
+                  />
+                  Live
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -406,9 +529,13 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            gap: '6px',
-            flex: 1,
-            maxWidth: '720px',
+            justifyContent: 'center',
+            gap: '4px',
+            flex: '1 1 auto',
+            minWidth: '240px',
+            maxWidth: '560px',
+            margin: '0 auto',
+            padding: '0 12px',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -457,8 +584,8 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
               onClick={onTogglePlay}
               disabled={isBuffering}
               style={{
-                width: '40px',
-                height: '40px',
+                width: '38px',
+                height: '38px',
                 borderRadius: 'var(--radius-full)',
                 backgroundColor: isPlaying ? 'var(--accent-emerald)' : 'var(--text-primary)',
                 color: '#000',
@@ -528,36 +655,20 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
           />
         </div>
 
-        {/* Right: Signal Status, Queue Drawer Toggle & Volume */}
+        {/* Right: Studio Audio Suite, Queue & Volume */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'flex-end',
-            gap: '14px',
-            width: '280px',
-            minWidth: '200px',
+            gap: '6px',
+            flexShrink: 0,
+            flex: '0 0 auto',
           }}
         >
-          {isStalled ? (
-            <Badge variant="rose">
-              <WifiOff size={12} /> Stalled
-            </Badge>
-          ) : isBuffering ? (
-            <Badge variant="cyan">Buffering P2P</Badge>
-          ) : (
-            <Badge variant="emerald">Live Stream</Badge>
-          )}
-
           {/* Synchronized Lyrics Toggle */}
           <button
-            onClick={() => {
-              setIsLyricsOpen((prev) => !prev);
-              if (!isLyricsOpen) {
-                setIsQueueOpen(false);
-                setIsEqOpen(false);
-              }
-            }}
+            onClick={toggleLyrics}
             style={{
               background: isLyricsOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
               border: isLyricsOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
@@ -565,27 +676,22 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
               color: isLyricsOpen ? 'var(--accent-emerald)' : 'var(--text-muted)',
               cursor: 'pointer',
               padding: '6px 8px',
-              display: 'flex',
+              display: 'inline-flex',
               alignItems: 'center',
               gap: '4px',
               fontSize: '0.75rem',
               transition: 'all 0.15s ease',
+              height: '32px',
             }}
             title="Toggle Synchronized Lyrics & Karaoke"
           >
-            <Mic2 size={16} />
-            <span>Lyrics</span>
+            <Mic2 size={15} />
+            <span className="player-btn-label">Lyrics</span>
           </button>
 
           {/* Studio Equalizer Toggle */}
           <button
-            onClick={() => {
-              setIsEqOpen((prev) => !prev);
-              if (!isEqOpen) {
-                setIsQueueOpen(false);
-                setIsLyricsOpen(false);
-              }
-            }}
+            onClick={toggleEq}
             style={{
               background: isEqOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
               border: isEqOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
@@ -593,25 +699,23 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
               color: isEqOpen ? 'var(--accent-emerald)' : eq.isEnabled && eq.preset !== 'flat' ? 'var(--accent-emerald)' : 'var(--text-muted)',
               cursor: 'pointer',
               padding: '6px 8px',
-              display: 'flex',
+              display: 'inline-flex',
               alignItems: 'center',
               gap: '4px',
               fontSize: '0.75rem',
               transition: 'all 0.15s ease',
+              height: '32px',
             }}
             title="Toggle 5-Band Studio Equalizer"
           >
-            <Sliders size={16} />
-            <span>EQ</span>
+            <Sliders size={15} />
+            <span className="player-btn-label">EQ</span>
           </button>
 
           {/* Playback Speed Popover */}
           <div style={{ position: 'relative' }}>
             <button
-              onClick={() => {
-                setIsRateMenuOpen((prev) => !prev);
-                setIsSleepMenuOpen(false);
-              }}
+              onClick={toggleRateMenu}
               style={{
                 background: playbackRate !== 1.0 ? 'rgba(16, 185, 129, 0.18)' : 'none',
                 border: playbackRate !== 1.0 ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
@@ -619,15 +723,16 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
                 color: playbackRate !== 1.0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
                 cursor: 'pointer',
                 padding: '6px 8px',
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
                 gap: '4px',
                 fontSize: '0.75rem',
                 transition: 'all 0.15s ease',
+                height: '32px',
               }}
               title="Adjust Playback Speed"
             >
-              <Gauge size={16} />
+              <Gauge size={14} />
               <span>{playbackRate}x</span>
             </button>
 
@@ -680,10 +785,7 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
           {/* Sleep Timer Popover */}
           <div style={{ position: 'relative' }}>
             <button
-              onClick={() => {
-                setIsSleepMenuOpen((prev) => !prev);
-                setIsRateMenuOpen(false);
-              }}
+              onClick={toggleSleepMenu}
               style={{
                 background: sleepTimer.timerOption !== 0 ? 'rgba(16, 185, 129, 0.18)' : 'none',
                 border: sleepTimer.timerOption !== 0 ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
@@ -691,16 +793,19 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
                 color: sleepTimer.timerOption !== 0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
                 cursor: 'pointer',
                 padding: '6px 8px',
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
                 gap: '4px',
                 fontSize: '0.75rem',
                 transition: 'all 0.15s ease',
+                height: '32px',
               }}
               title={sleepTimer.timerOption !== 0 ? `Sleep timer: ${sleepTimer.formattedRemaining} remaining` : 'Set Sleep Timer'}
             >
-              <Timer size={16} />
-              <span>{sleepTimer.formattedRemaining || 'Timer'}</span>
+              <Timer size={14} />
+              <span className={sleepTimer.timerOption !== 0 ? '' : 'player-btn-label'}>
+                {sleepTimer.formattedRemaining || 'Timer'}
+              </span>
             </button>
 
             {isSleepMenuOpen && (
@@ -759,13 +864,7 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
 
           {/* Queue Drawer Toggle */}
           <button
-            onClick={() => {
-              setIsQueueOpen((prev) => !prev);
-              if (!isQueueOpen) {
-                setIsEqOpen(false);
-                setIsLyricsOpen(false);
-              }
-            }}
+            onClick={toggleQueue}
             style={{
               background: isQueueOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
               border: isQueueOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
@@ -773,16 +872,17 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
               color: isQueueOpen ? 'var(--accent-emerald)' : 'var(--text-muted)',
               cursor: 'pointer',
               padding: '6px 8px',
-              display: 'flex',
+              display: 'inline-flex',
               alignItems: 'center',
               gap: '4px',
               fontSize: '0.75rem',
               transition: 'all 0.15s ease',
+              height: '32px',
             }}
             title="Toggle Swarm Playback Queue"
           >
-            <ListMusic size={16} />
-            <span>{queue.length}</span>
+            <ListMusic size={15} />
+            {queue.length > 0 && <span>{queue.length}</span>}
           </button>
 
           {/* Download Audio Track */}
@@ -795,11 +895,15 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
               borderRadius: 'var(--radius-sm)',
               color: 'var(--text-muted)',
               cursor: 'pointer',
-              padding: '6px 8px',
-              display: 'flex',
+              padding: '6px',
+              display: 'inline-flex',
               alignItems: 'center',
+              justifyContent: 'center',
               textDecoration: 'none',
               transition: 'all 0.15s ease',
+              height: '32px',
+              width: '32px',
+              boxSizing: 'border-box',
             }}
             title={`Download ${currentTrack.artist ? `${currentTrack.artist} - ` : ''}${currentTrack.title}.mp3`}
             onMouseEnter={(e) => {
@@ -811,7 +915,7 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
               e.currentTarget.style.borderColor = 'var(--border-glass)';
             }}
           >
-            <Download size={16} />
+            <Download size={15} />
           </a>
 
           {/* Fullscreen Studio Toggle */}
@@ -823,10 +927,14 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
               borderRadius: 'var(--radius-sm)',
               color: 'var(--text-muted)',
               cursor: 'pointer',
-              padding: '6px 8px',
-              display: 'flex',
+              padding: '6px',
+              display: 'inline-flex',
               alignItems: 'center',
+              justifyContent: 'center',
               transition: 'all 0.15s ease',
+              height: '32px',
+              width: '32px',
+              boxSizing: 'border-box',
             }}
             title="Open Studio Mode (F)"
             onMouseEnter={(e) => {
@@ -838,7 +946,7 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
               e.currentTarget.style.borderColor = 'var(--border-glass)';
             }}
           >
-            <Maximize2 size={16} />
+            <Maximize2 size={15} />
           </button>
 
           <VolumeControl
@@ -850,5 +958,4 @@ const [isLyricsOpen, setIsLyricsOpen] = useState(false);
         </div>
       </div>
     </>
-  );
-};
+  );};
