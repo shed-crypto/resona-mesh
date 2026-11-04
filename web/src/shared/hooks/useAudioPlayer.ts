@@ -21,6 +21,8 @@ export function useAudioPlayer() {
   const [queueIndex, setQueueIndex] = useState<number>(-1);
   const [isShuffle, setIsShuffle] = useState(false);
   const [isRepeat, setIsRepeat] = useState(false);
+  const [playbackRate, setPlaybackRateState] = useState<number>(1.0);
+  const playbackRateRef = useRef<number>(1.0);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -154,6 +156,8 @@ export function useAudioPlayer() {
     const streamUrl = apiClient.getStreamUrl(track.content_id);
     audio.src = streamUrl;
     audio.load();
+    audio.playbackRate = playbackRateRef.current;
+    audio.preservesPitch = true;
     recordLocalPlay(track.content_id, false);
 
     try {
@@ -234,6 +238,15 @@ export function useAudioPlayer() {
     }
   }, [currentTrack]);
 
+  const setPlaybackRate = useCallback((rate: number) => {
+    setPlaybackRateState(rate);
+    playbackRateRef.current = rate;
+    if (audioRef.current) {
+      audioRef.current.playbackRate = rate;
+      audioRef.current.preservesPitch = true;
+    }
+  }, []);
+
   const seek = useCallback((targetTimeSeconds: number) => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -290,6 +303,8 @@ export function useAudioPlayer() {
     playTrack,
     togglePlay,
     seek,
+    playbackRate,
+    setPlaybackRate,
     isPlaying: playerState === 'playing',
     // Queue & Controls
     queue,
