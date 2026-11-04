@@ -21,6 +21,7 @@ export function App() {
   const [catalogRefreshTrigger, setCatalogRefreshTrigger] = useState(0);
 
   const {
+    audioElement,
     currentTrack,
     playerState,
     currentTime,
@@ -173,6 +174,7 @@ export function App() {
 
       {/* Bottom Floating Player Dock with Queue & Artwork */}
       <AudioPlayerBar
+        audioElement={audioElement}
         currentTrack={currentTrack}
         playerState={playerState}
         currentTime={currentTime}

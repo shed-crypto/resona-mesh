@@ -12,10 +12,13 @@ import {
   Trash2,
   Download,
   Mic2,
+  Sliders,
 } from 'lucide-react';
 import type { Track } from '../../types/track';
 import type { PlayerState } from '../../shared/hooks/useAudioPlayer';
 import { LyricsDrawer } from './LyricsDrawer';
+import { EqualizerDrawer } from './EqualizerDrawer';
+import { useAudioEqualizer } from './useAudioEqualizer';
 import { WaveformScrubber } from './WaveformScrubber';
 import { VolumeControl } from './VolumeControl';
 import { Badge } from '../../shared/components/Badge';
@@ -23,6 +26,7 @@ import { generateCoverDataUri } from '../../shared/utils/artwork';
 import { apiClient } from '../../shared/api/client';
 
 interface AudioPlayerBarProps {
+  audioElement?: HTMLAudioElement | null;
   currentTrack: Track | null;
   playerState: PlayerState;
   currentTime: number;
@@ -48,6 +52,7 @@ interface AudioPlayerBarProps {
 }
 
 export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
+  audioElement,
   currentTrack,
   playerState,
   currentTime,
@@ -72,6 +77,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 }) => {
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
+  const [isEqOpen, setIsEqOpen] = useState(false);
+  const eq = useAudioEqualizer(audioElement ?? null);
 
   if (!currentTrack) {
     return null;
@@ -93,6 +100,19 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
         isOpen={isLyricsOpen}
         onClose={() => setIsLyricsOpen(false)}
         onSeek={onSeek}
+      />
+
+      {/* Floating 5-Band Studio Equalizer Drawer */}
+      <EqualizerDrawer
+        isOpen={isEqOpen}
+        onClose={() => setIsEqOpen(false)}
+        isEnabled={eq.isEnabled}
+        preset={eq.preset}
+        gains={eq.gains}
+        onBandGainChange={eq.setBandGain}
+        onSelectPreset={eq.selectPreset}
+        onToggleBypass={eq.toggleBypass}
+        onResetFlat={eq.resetFlat}
       />
 
       {/* Floating Playback Queue Drawer */}
@@ -459,6 +479,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               setIsLyricsOpen((prev) => !prev);
               if (!isLyricsOpen) {
                 setIsQueueOpen(false);
+                setIsEqOpen(false);
               }
             }}
             style={{
@@ -480,9 +501,43 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             <span>Lyrics</span>
           </button>
 
+          {/* Studio Equalizer Toggle */}
+          <button
+            onClick={() => {
+              setIsEqOpen((prev) => !prev);
+              if (!isEqOpen) {
+                setIsQueueOpen(false);
+                setIsLyricsOpen(false);
+              }
+            }}
+            style={{
+              background: isEqOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
+              border: isEqOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+              borderRadius: 'var(--radius-sm)',
+              color: isEqOpen ? 'var(--accent-emerald)' : eq.isEnabled && eq.preset !== 'flat' ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: '6px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontSize: '0.75rem',
+              transition: 'all 0.15s ease',
+            }}
+            title="Toggle 5-Band Studio Equalizer"
+          >
+            <Sliders size={16} />
+            <span>EQ</span>
+          </button>
+
           {/* Queue Drawer Toggle */}
           <button
-            onClick={() => setIsQueueOpen((prev) => !prev)}
+            onClick={() => {
+              setIsQueueOpen((prev) => !prev);
+              if (!isQueueOpen) {
+                setIsEqOpen(false);
+                setIsLyricsOpen(false);
+              }
+            }}
             style={{
               background: isQueueOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
               border: isQueueOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
