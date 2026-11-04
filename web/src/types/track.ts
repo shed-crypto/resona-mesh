@@ -3,6 +3,7 @@ export interface Track {
   title: string;
   artist: string;
   description: string;
+  lyrics?: string;
   duration_ms: number;
   bitrate_kbps: number;
   total_size_bytes: number;
@@ -25,6 +26,7 @@ export interface Manifest {
   content_id: string;
   title: string;
   artist: string;
+  lyrics?: string;
   duration_ms: number;
   bitrate_kbps: number;
   total_size_bytes: number;

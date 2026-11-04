@@ -77,6 +77,38 @@ func (d *DB) migrate() error {
 			return fmt.Errorf("migration %d failed: %w", idx+1, err)
 		}
 	}
+
+	// Idempotent column check for existing databases
+	if err := d.ensureLyricsColumn(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *DB) ensureLyricsColumn() error {
+	rows, err := d.db.Query("PRAGMA table_info(tracks)")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	hasLyrics := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err == nil {
+			if name == "lyrics" {
+				hasLyrics = true
+				break
+			}
+		}
+	}
+	if !hasLyrics {
+		_, _ = d.db.Exec("ALTER TABLE tracks ADD COLUMN lyrics TEXT NOT NULL DEFAULT ''")
+	}
 	return nil
 }
 

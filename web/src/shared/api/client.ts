@@ -102,6 +102,21 @@ export const apiClient = {
     return res.json();
   },
 
+  async updateTrackLyrics(id: string, lyrics: string): Promise<{ status: string; content_id: string; lyrics: string }> {
+    const res = await fetch(`${API_BASE}/tracks/${id}/lyrics`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ lyrics }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to update lyrics: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
   async importTrack(formData: FormData): Promise<{ manifest: Manifest; track: Track }> {
     const res = await fetch(`${API_BASE}/tracks/import`, {
       method: 'POST',

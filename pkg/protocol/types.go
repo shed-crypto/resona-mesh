@@ -15,6 +15,7 @@ type Manifest struct {
 	PublishedAt     int64    `json:"published_at"`
 	LicenseCode     string   `json:"license_code"`
 	Signature       string   `json:"signature"`
+	Lyrics          string   `json:"lyrics,omitempty"`
 }
 
 // BlockRequest requests an individual 256 KiB audio chunk by index.
@@ -72,6 +73,7 @@ type ReceiptEvent struct {
 	ReceivedAt      int64  `json:"received_at"`
 	Signature       string `json:"signature"`
 }
+
 // ModeratorCertificate delegates or revokes moderation authority from the Root Admin to a moderator key.
 type ModeratorCertificate struct {
 	CertID          string `json:"cert_id"`
@@ -98,7 +100,6 @@ type KeyRotationEvent struct {
 	IssuedAt       int64  `json:"issued_at"`
 	Signature      string `json:"signature"`
 }
-
 
 // ReleaseManifest describes an authentic, signed application update binary chunked across the swarm.
 type ReleaseManifest struct {
