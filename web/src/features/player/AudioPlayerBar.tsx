@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Play,
   Pause,
@@ -12,10 +12,18 @@ import {
   Trash2,
   Download,
   Mic2,
+  Sliders,
+  Gauge,
+  Timer,
+  Maximize2,
 } from 'lucide-react';
 import type { Track } from '../../types/track';
 import type { PlayerState } from '../../shared/hooks/useAudioPlayer';
 import { LyricsDrawer } from './LyricsDrawer';
+import { EqualizerDrawer } from './EqualizerDrawer';
+import { FullscreenPlayerModal } from './FullscreenPlayerModal';
+import { useAudioEqualizer } from './useAudioEqualizer';
+import { useSleepTimer, type SleepTimerOption } from './useSleepTimer';
 import { WaveformScrubber } from './WaveformScrubber';
 import { VolumeControl } from './VolumeControl';
 import { Badge } from '../../shared/components/Badge';
@@ -23,6 +31,7 @@ import { generateCoverDataUri } from '../../shared/utils/artwork';
 import { apiClient } from '../../shared/api/client';
 
 interface AudioPlayerBarProps {
+  audioElement?: HTMLAudioElement | null;
   currentTrack: Track | null;
   playerState: PlayerState;
   currentTime: number;
@@ -34,6 +43,8 @@ interface AudioPlayerBarProps {
   onSeek: (seconds: number) => void;
   onVolumeChange: (val: number) => void;
   onToggleMute: () => void;
+  playbackRate?: number;
+  onPlaybackRateChange?: (rate: number) => void;
   // Queue & Navigation
   queue?: Track[];
   queueIndex?: number;
@@ -48,6 +59,7 @@ interface AudioPlayerBarProps {
 }
 
 export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
+  audioElement,
   currentTrack,
   playerState,
   currentTime,
@@ -59,6 +71,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   onSeek,
   onVolumeChange,
   onToggleMute,
+  playbackRate = 1.0,
+  onPlaybackRateChange,
   queue = [],
   queueIndex = -1,
   isShuffle = false,
@@ -71,7 +85,35 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   onClearQueue,
 }) => {
   const [isQueueOpen, setIsQueueOpen] = useState(false);
-  const [isLyricsOpen, setIsLyricsOpen] = useState(false);
+const [isLyricsOpen, setIsLyricsOpen] = useState(false);
+  const [isEqOpen, setIsEqOpen] = useState(false);
+  const [isRateMenuOpen, setIsRateMenuOpen] = useState(false);
+  const [isSleepMenuOpen, setIsSleepMenuOpen] = useState(false);
+  const [isFullscreenOpen, setIsFullscreenOpen] = useState(false);
+  const eq = useAudioEqualizer(audioElement ?? null);
+  const sleepTimer = useSleepTimer(
+    audioElement ?? null,
+    volume,
+    isMuted,
+    () => {
+      if (playerState === 'playing') {
+        onTogglePlay();
+      }
+    }
+  );
+
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
+      if (e.key === 'f' || e.key === 'F') {
+        setIsFullscreenOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   if (!currentTrack) {
     return null;
@@ -93,6 +135,60 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
         isOpen={isLyricsOpen}
         onClose={() => setIsLyricsOpen(false)}
         onSeek={onSeek}
+      />
+
+      {/* Floating 5-Band Studio Equalizer Drawer */}
+      <EqualizerDrawer
+        isOpen={isEqOpen}
+        onClose={() => setIsEqOpen(false)}
+        isEnabled={eq.isEnabled}
+        preset={eq.preset}
+        gains={eq.gains}
+        onBandGainChange={eq.setBandGain}
+        onSelectPreset={eq.selectPreset}
+        onToggleBypass={eq.toggleBypass}
+        onResetFlat={eq.resetFlat}
+      />
+
+      {/* Fullscreen Studio Modal */}
+      <FullscreenPlayerModal
+        isOpen={isFullscreenOpen}
+        onClose={() => setIsFullscreenOpen(false)}
+        currentTrack={currentTrack}
+        playerState={playerState}
+        currentTime={currentTime}
+        duration={duration}
+        bufferedPct={bufferedPct}
+        volume={volume}
+        isMuted={isMuted}
+        onTogglePlay={onTogglePlay}
+        onSeek={onSeek}
+        onVolumeChange={onVolumeChange}
+        onToggleMute={onToggleMute}
+        playbackRate={playbackRate}
+        onPlaybackRateChange={onPlaybackRateChange}
+        sleepTimerOption={sleepTimer.timerOption}
+        sleepRemainingFormatted={sleepTimer.formattedRemaining}
+        onStartSleepTimer={sleepTimer.startTimer}
+        queue={queue}
+        queueIndex={queueIndex}
+        isShuffle={isShuffle}
+        isRepeat={isRepeat}
+        onPlayNext={onPlayNext}
+        onPlayPrevious={onPlayPrevious}
+        onToggleShuffle={onToggleShuffle}
+        onToggleRepeat={onToggleRepeat}
+        onSelectQueueTrack={onSelectQueueTrack}
+        analyser={eq.analyser}
+        equalizerProps={{
+          isEnabled: eq.isEnabled,
+          preset: eq.preset,
+          gains: eq.gains,
+          onBandGainChange: eq.setBandGain,
+          onSelectPreset: eq.selectPreset,
+          onToggleBypass: eq.toggleBypass,
+          onResetFlat: eq.resetFlat,
+        }}
       />
 
       {/* Floating Playback Queue Drawer */}
@@ -459,6 +555,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               setIsLyricsOpen((prev) => !prev);
               if (!isLyricsOpen) {
                 setIsQueueOpen(false);
+                setIsEqOpen(false);
               }
             }}
             style={{
@@ -480,9 +577,195 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             <span>Lyrics</span>
           </button>
 
+          {/* Studio Equalizer Toggle */}
+          <button
+            onClick={() => {
+              setIsEqOpen((prev) => !prev);
+              if (!isEqOpen) {
+                setIsQueueOpen(false);
+                setIsLyricsOpen(false);
+              }
+            }}
+            style={{
+              background: isEqOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
+              border: isEqOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+              borderRadius: 'var(--radius-sm)',
+              color: isEqOpen ? 'var(--accent-emerald)' : eq.isEnabled && eq.preset !== 'flat' ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: '6px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontSize: '0.75rem',
+              transition: 'all 0.15s ease',
+            }}
+            title="Toggle 5-Band Studio Equalizer"
+          >
+            <Sliders size={16} />
+            <span>EQ</span>
+          </button>
+
+          {/* Playback Speed Popover */}
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => {
+                setIsRateMenuOpen((prev) => !prev);
+                setIsSleepMenuOpen(false);
+              }}
+              style={{
+                background: playbackRate !== 1.0 ? 'rgba(16, 185, 129, 0.18)' : 'none',
+                border: playbackRate !== 1.0 ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+                borderRadius: 'var(--radius-sm)',
+                color: playbackRate !== 1.0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '6px 8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '0.75rem',
+                transition: 'all 0.15s ease',
+              }}
+              title="Adjust Playback Speed"
+            >
+              <Gauge size={16} />
+              <span>{playbackRate}x</span>
+            </button>
+
+            {isRateMenuOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '42px',
+                  right: 0,
+                  backgroundColor: 'rgba(16, 19, 26, 0.96)',
+                  backdropFilter: 'blur(20px)',
+                  border: '1px solid var(--border-active)',
+                  borderRadius: 'var(--radius-md)',
+                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
+                  padding: '6px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '2px',
+                  zIndex: 120,
+                  minWidth: '80px',
+                }}
+              >
+                {[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map((rate) => (
+                  <button
+                    key={rate}
+                    onClick={() => {
+                      onPlaybackRateChange?.(rate);
+                      setIsRateMenuOpen(false);
+                    }}
+                    style={{
+                      background: playbackRate === rate ? 'rgba(16, 185, 129, 0.15)' : 'none',
+                      border: 'none',
+                      borderRadius: 'var(--radius-sm)',
+                      color: playbackRate === rate ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                      cursor: 'pointer',
+                      padding: '6px 12px',
+                      fontSize: '0.75rem',
+                      textAlign: 'left',
+                      fontWeight: playbackRate === rate ? 600 : 400,
+                      transition: 'all 0.1s ease',
+                    }}
+                  >
+                    {rate}x
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Sleep Timer Popover */}
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => {
+                setIsSleepMenuOpen((prev) => !prev);
+                setIsRateMenuOpen(false);
+              }}
+              style={{
+                background: sleepTimer.timerOption !== 0 ? 'rgba(16, 185, 129, 0.18)' : 'none',
+                border: sleepTimer.timerOption !== 0 ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+                borderRadius: 'var(--radius-sm)',
+                color: sleepTimer.timerOption !== 0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '6px 8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '0.75rem',
+                transition: 'all 0.15s ease',
+              }}
+              title={sleepTimer.timerOption !== 0 ? `Sleep timer: ${sleepTimer.formattedRemaining} remaining` : 'Set Sleep Timer'}
+            >
+              <Timer size={16} />
+              <span>{sleepTimer.formattedRemaining || 'Timer'}</span>
+            </button>
+
+            {isSleepMenuOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '42px',
+                  right: 0,
+                  backgroundColor: 'rgba(16, 19, 26, 0.96)',
+                  backdropFilter: 'blur(20px)',
+                  border: '1px solid var(--border-active)',
+                  borderRadius: 'var(--radius-md)',
+                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
+                  padding: '6px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '2px',
+                  zIndex: 120,
+                  minWidth: '120px',
+                }}
+              >
+                {[
+                  { label: 'Off', val: 0 as SleepTimerOption },
+                  { label: '15 min', val: 15 as SleepTimerOption },
+                  { label: '30 min', val: 30 as SleepTimerOption },
+                  { label: '45 min', val: 45 as SleepTimerOption },
+                  { label: '60 min', val: 60 as SleepTimerOption },
+                  { label: 'End of Track', val: -1 as SleepTimerOption },
+                ].map((opt) => (
+                  <button
+                    key={opt.label}
+                    onClick={() => {
+                      sleepTimer.startTimer(opt.val);
+                      setIsSleepMenuOpen(false);
+                    }}
+                    style={{
+                      background: sleepTimer.timerOption === opt.val ? 'rgba(16, 185, 129, 0.15)' : 'none',
+                      border: 'none',
+                      borderRadius: 'var(--radius-sm)',
+                      color: sleepTimer.timerOption === opt.val ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                      cursor: 'pointer',
+                      padding: '6px 12px',
+                      fontSize: '0.75rem',
+                      textAlign: 'left',
+                      fontWeight: sleepTimer.timerOption === opt.val ? 600 : 400,
+                      transition: 'all 0.1s ease',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Queue Drawer Toggle */}
           <button
-            onClick={() => setIsQueueOpen((prev) => !prev)}
+            onClick={() => {
+              setIsQueueOpen((prev) => !prev);
+              if (!isQueueOpen) {
+                setIsEqOpen(false);
+                setIsLyricsOpen(false);
+              }
+            }}
             style={{
               background: isQueueOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
               border: isQueueOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
@@ -530,6 +813,33 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           >
             <Download size={16} />
           </a>
+
+          {/* Fullscreen Studio Toggle */}
+          <button
+            onClick={() => setIsFullscreenOpen(true)}
+            style={{
+              background: 'none',
+              border: '1px solid var(--border-glass)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: '6px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              transition: 'all 0.15s ease',
+            }}
+            title="Open Studio Mode (F)"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = 'var(--accent-emerald)';
+              e.currentTarget.style.borderColor = 'var(--accent-emerald)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'var(--text-muted)';
+              e.currentTarget.style.borderColor = 'var(--border-glass)';
+            }}
+          >
+            <Maximize2 size={16} />
+          </button>
 
           <VolumeControl
             volume={volume}
