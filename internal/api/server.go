@@ -158,6 +158,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("HEAD /api/v1/tracks/{id}/download", s.handleDownloadTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/pin", s.handlePinTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/unpin", s.handleUnpinTrack)
+	s.mux.HandleFunc("PUT /api/v1/tracks/{id}/lyrics", s.handleUpdateTrackLyrics)
 	s.mux.HandleFunc("DELETE /api/v1/tracks/{id}", s.handleDeleteTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/import", s.handleImportTrack)
 	s.mux.HandleFunc("GET /api/v1/stream/{id}", s.handleStream)
@@ -391,6 +392,42 @@ func (s *Server) handleUnpinTrack(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleUpdateTrackLyrics updates synchronized lyrics for a track.
+func (s *Server) handleUpdateTrackLyrics(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "headless relay mode active: mutations are disabled")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	var req struct {
+		Lyrics string `json:"lyrics"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json request body: "+err.Error())
+		return
+	}
+
+	if err := s.catalog.UpdateTrackLyrics(r.Context(), id, req.Lyrics); err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to update track lyrics")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":     "updated",
+		"content_id": id,
+		"lyrics":     req.Lyrics,
+	})
+}
+
 // handleDeleteTrack removes a track from the catalog.
 func (s *Server) handleDeleteTrack(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Headless {
@@ -442,6 +479,7 @@ func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(r.FormValue("title"))
 	artist := strings.TrimSpace(r.FormValue("artist"))
 	description := strings.TrimSpace(r.FormValue("description"))
+	lyrics := strings.TrimSpace(r.FormValue("lyrics"))
 	licenseCode := strings.TrimSpace(r.FormValue("license"))
 	if licenseCode == "" {
 		licenseCode = protocol.LicenseCCBY40
@@ -480,6 +518,7 @@ func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
 		Title:        title,
 		Artist:       artist,
 		Description:  description,
+		Lyrics:       lyrics,
 		DurationMs:   durationMs,
 		BitrateKbps:  bitrateKbps,
 		LicenseCode:  licenseCode,

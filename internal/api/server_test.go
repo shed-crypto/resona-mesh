@@ -1377,3 +1377,140 @@ func TestAPIUpdaterEndpoints(t *testing.T) {
 		t.Fatalf("expected restored initial binary, got: %s", string(restoredContent))
 	}
 }
+
+func TestTrackLyricsEndpoint(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	audioData := bytes.Repeat([]byte{0x42}, 128*1024)
+	initialLyrics := "[00:01.00] Echoes in the dark\n[00:05.50] Resonating pulse"
+
+	// 1. Import track with initial lyrics
+	var reqBody bytes.Buffer
+	writer := multipart.NewWriter(&reqBody)
+	_ = writer.WriteField("title", "Neon Echoes")
+	_ = writer.WriteField("artist", "Synth Swarm")
+	_ = writer.WriteField("lyrics", initialLyrics)
+	_ = writer.WriteField("license", protocol.LicenseCCBY40)
+
+	part, err := writer.CreateFormFile("audio_file", "neon.mp3")
+	if err != nil {
+		t.Fatalf("failed to create form file: %v", err)
+	}
+	if _, err := part.Write(audioData); err != nil {
+		t.Fatalf("failed to write multipart audio: %v", err)
+	}
+	_ = writer.Close()
+
+	uploadResp, err := http.Post(ts.URL+"/api/v1/tracks/import", writer.FormDataContentType(), &reqBody)
+	if err != nil {
+		t.Fatalf("failed POST /api/v1/tracks/import: %v", err)
+	}
+	defer uploadResp.Body.Close()
+
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d", uploadResp.StatusCode)
+	}
+
+	var importResult struct {
+		Manifest protocol.Manifest `json:"manifest"`
+		Track    catalog.Track     `json:"track"`
+	}
+	if err := json.NewDecoder(uploadResp.Body).Decode(&importResult); err != nil {
+		t.Fatalf("failed to decode import response: %v", err)
+	}
+
+	contentID := importResult.Manifest.ContentID
+	if contentID == "" {
+		t.Fatal("content_id is empty")
+	}
+	if importResult.Track.Lyrics != initialLyrics {
+		t.Fatalf("expected initial lyrics %q, got %q", initialLyrics, importResult.Track.Lyrics)
+	}
+
+	// 2. GET /api/v1/tracks/{id}
+	getResp, err := http.Get(fmt.Sprintf("%s/api/v1/tracks/%s", ts.URL, contentID))
+	if err != nil {
+		t.Fatalf("failed GET track: %v", err)
+	}
+	defer getResp.Body.Close()
+	var trackResp catalog.Track
+	if err := json.NewDecoder(getResp.Body).Decode(&trackResp); err != nil {
+		t.Fatalf("failed to decode track response: %v", err)
+	}
+	if trackResp.Lyrics != initialLyrics {
+		t.Fatalf("expected track lyrics %q, got %q", initialLyrics, trackResp.Lyrics)
+	}
+
+	// 3. GET /api/v1/tracks/{id}/manifest
+	manifestResp, err := http.Get(fmt.Sprintf("%s/api/v1/tracks/%s/manifest", ts.URL, contentID))
+	if err != nil {
+		t.Fatalf("failed GET manifest: %v", err)
+	}
+	defer manifestResp.Body.Close()
+	var manifestRespData protocol.Manifest
+	if err := json.NewDecoder(manifestResp.Body).Decode(&manifestRespData); err != nil {
+		t.Fatalf("failed to decode manifest: %v", err)
+	}
+	if manifestRespData.Lyrics != initialLyrics {
+		t.Fatalf("expected manifest lyrics %q, got %q", initialLyrics, manifestRespData.Lyrics)
+	}
+
+	// 4. Update lyrics via PUT /api/v1/tracks/{id}/lyrics
+	updatedLyrics := "[00:02.00] New lyric verse\n[00:08.00] High fidelity karaoke"
+	putPayload, _ := json.Marshal(map[string]string{"lyrics": updatedLyrics})
+	client := &http.Client{}
+
+	putReq, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/tracks/%s/lyrics", ts.URL, contentID), bytes.NewReader(putPayload))
+	if err != nil {
+		t.Fatalf("failed to create PUT request: %v", err)
+	}
+	putReq.Header.Set("Content-Type", "application/json")
+
+	putResp, err := client.Do(putReq)
+	if err != nil {
+		t.Fatalf("failed PUT lyrics: %v", err)
+	}
+	defer putResp.Body.Close()
+
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for lyrics update, got %d", putResp.StatusCode)
+	}
+
+	var putResult struct {
+		Status    string `json:"status"`
+		ContentID string `json:"content_id"`
+		Lyrics    string `json:"lyrics"`
+	}
+	if err := json.NewDecoder(putResp.Body).Decode(&putResult); err != nil {
+		t.Fatalf("failed to decode put result: %v", err)
+	}
+	if putResult.Lyrics != updatedLyrics || putResult.Status != "updated" {
+		t.Fatalf("unexpected put response: %+v", putResult)
+	}
+
+	// 5. Verify GET /api/v1/tracks/{id} reflects updated lyrics
+	getUpdatedResp, err := http.Get(fmt.Sprintf("%s/api/v1/tracks/%s", ts.URL, contentID))
+	if err != nil {
+		t.Fatalf("failed GET track after update: %v", err)
+	}
+	defer getUpdatedResp.Body.Close()
+	var updatedTrackResp catalog.Track
+	_ = json.NewDecoder(getUpdatedResp.Body).Decode(&updatedTrackResp)
+	if updatedTrackResp.Lyrics != updatedLyrics {
+		t.Fatalf("expected updated lyrics %q, got %q", updatedLyrics, updatedTrackResp.Lyrics)
+	}
+
+	// 6. Test 404 on non-existent track
+	badReq, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/tracks/%s/lyrics", ts.URL, "nonexistent-id"), bytes.NewReader(putPayload))
+	badReq.Header.Set("Content-Type", "application/json")
+	badResp, err := client.Do(badReq)
+	if err != nil {
+		t.Fatalf("failed bad PUT request: %v", err)
+	}
+	defer badResp.Body.Close()
+	if badResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found, got %d", badResp.StatusCode)
+	}
+}
+

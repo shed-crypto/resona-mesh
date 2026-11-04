@@ -22,6 +22,7 @@ type Track struct {
 	Title           string  `json:"title"`
 	Artist          string  `json:"artist"`
 	Description     string  `json:"description"`
+	Lyrics          string  `json:"lyrics,omitempty"`
 	DurationMs      int64   `json:"duration_ms"`
 	BitrateKbps     int     `json:"bitrate_kbps"`
 	TotalSizeBytes  int64   `json:"total_size_bytes"`
@@ -96,7 +97,7 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 
 		listQuery = `
 			SELECT 
-				t.content_id, t.title, t.artist, t.description, t.duration_ms, 
+				t.content_id, t.title, t.artist, t.description, t.lyrics, t.duration_ms, 
 				t.bitrate_kbps, t.total_size_bytes, t.block_size, t.block_count, 
 				t.publisher_key, t.published_at, t.license_code, t.signature, 
 				t.pinned, t.created_at,
@@ -134,7 +135,7 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 
 		listQuery = `
 			SELECT 
-				t.content_id, t.title, t.artist, t.description, t.duration_ms, 
+				t.content_id, t.title, t.artist, t.description, t.lyrics, t.duration_ms, 
 				t.bitrate_kbps, t.total_size_bytes, t.block_size, t.block_count, 
 				t.publisher_key, t.published_at, t.license_code, t.signature, 
 				t.pinned, t.created_at,
@@ -185,7 +186,7 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 		var t Track
 		var pinnedInt, storedBlocks, isBlockedInt, hasCoverInt int
 		err := rows.Scan(
-			&t.ContentID, &t.Title, &t.Artist, &t.Description, &t.DurationMs,
+			&t.ContentID, &t.Title, &t.Artist, &t.Description, &t.Lyrics, &t.DurationMs,
 			&t.BitrateKbps, &t.TotalSizeBytes, &t.BlockSize, &t.BlockCount,
 			&t.PublisherKey, &t.PublishedAt, &t.LicenseCode, &t.Signature,
 			&pinnedInt, &t.CreatedAt, &storedBlocks,
@@ -214,7 +215,7 @@ func (c *Catalog) ListTracks(ctx context.Context, q Query) ([]Track, int, error)
 func (c *Catalog) GetTrack(ctx context.Context, contentID string) (*Track, error) {
 	query := `
 		SELECT 
-			t.content_id, t.title, t.artist, t.description, t.duration_ms, 
+			t.content_id, t.title, t.artist, t.description, t.lyrics, t.duration_ms, 
 			t.bitrate_kbps, t.total_size_bytes, t.block_size, t.block_count, 
 			t.publisher_key, t.published_at, t.license_code, t.signature, 
 			t.pinned, t.created_at,
@@ -230,7 +231,7 @@ func (c *Catalog) GetTrack(ctx context.Context, contentID string) (*Track, error
 	var t Track
 	var pinnedInt, storedBlocks, isBlockedInt, hasCoverInt int
 	err := c.db.Raw().QueryRowContext(ctx, query, contentID).Scan(
-		&t.ContentID, &t.Title, &t.Artist, &t.Description, &t.DurationMs,
+		&t.ContentID, &t.Title, &t.Artist, &t.Description, &t.Lyrics, &t.DurationMs,
 		&t.BitrateKbps, &t.TotalSizeBytes, &t.BlockSize, &t.BlockCount,
 		&t.PublisherKey, &t.PublishedAt, &t.LicenseCode, &t.Signature,
 		&pinnedInt, &t.CreatedAt, &storedBlocks,
@@ -269,6 +270,7 @@ func (c *Catalog) GetManifest(ctx context.Context, contentID string) (*protocol.
 		ContentID:       t.ContentID,
 		Title:           t.Title,
 		Artist:          t.Artist,
+		Lyrics:          t.Lyrics,
 		DurationMs:      t.DurationMs,
 		BitrateKbps:     t.BitrateKbps,
 		TotalSizeBytes:  t.TotalSizeBytes,
@@ -333,16 +335,17 @@ func (c *Catalog) RegisterRemoteManifest(ctx context.Context, m *protocol.Manife
 
 	insertTrackSQL := `
 	INSERT INTO tracks (
-		content_id, title, artist, description, duration_ms, bitrate_kbps,
+		content_id, title, artist, description, lyrics, duration_ms, bitrate_kbps,
 		total_size_bytes, block_size, block_count, publisher_key, published_at,
 		license_code, signature, pinned, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
 
 	_, err = tx.ExecContext(ctx, insertTrackSQL,
 		m.ContentID,
 		m.Title,
 		m.Artist,
 		"",
+		m.Lyrics,
 		m.DurationMs,
 		m.BitrateKbps,
 		m.TotalSizeBytes,
@@ -494,4 +497,21 @@ func sanitizeFTSQuery(term string) string {
 		parts = append(parts, w+"*")
 	}
 	return strings.Join(parts, " ")
+}
+
+// UpdateTrackLyrics updates or attaches lyrics text/LRC for a track.
+func (c *Catalog) UpdateTrackLyrics(ctx context.Context, contentID string, lyrics string) error {
+	query := "UPDATE tracks SET lyrics = ? WHERE content_id = ?"
+	res, err := c.db.Raw().ExecContext(ctx, query, lyrics, contentID)
+	if err != nil {
+		return fmt.Errorf("catalog: failed to update track lyrics: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrTrackNotFound
+	}
+	return nil
 }

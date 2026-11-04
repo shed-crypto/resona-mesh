@@ -29,6 +29,7 @@ type ImportParams struct {
 	Title        string
 	Artist       string
 	Description  string
+	Lyrics       string
 	DurationMs   int64
 	BitrateKbps  int
 	LicenseCode  string
@@ -178,16 +179,17 @@ func (imp *Importer) Import(ctx context.Context, params ImportParams) (*protocol
 
 	insertTrackSQL := `
 	INSERT INTO tracks (
-		content_id, title, artist, description, duration_ms, bitrate_kbps,
+		content_id, title, artist, description, lyrics, duration_ms, bitrate_kbps,
 		total_size_bytes, block_size, block_count, publisher_key, published_at,
 		license_code, signature, pinned, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = tx.ExecContext(ctx, insertTrackSQL,
 		manifest.ContentID,
 		manifest.Title,
 		manifest.Artist,
 		params.Description,
+		params.Lyrics,
 		manifest.DurationMs,
 		manifest.BitrateKbps,
 		manifest.TotalSizeBytes,

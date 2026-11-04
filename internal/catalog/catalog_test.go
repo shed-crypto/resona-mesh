@@ -3,6 +3,7 @@ package catalog_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -454,3 +455,61 @@ func TestCatalogCoverArt(t *testing.T) {
 	}
 }
 
+
+func TestCatalogTrackLyrics(t *testing.T) {
+	ctx := context.Background()
+	cat, imp, _ := setupTestCatalog(t)
+	_, privKey, _ := crypto.GenerateKeyPair()
+
+	audioData := make([]byte, 50*1024)
+	initialLyrics := "[00:01.50] Hello ResonaMesh\n[00:05.00] Decentralized audio stream"
+
+	m, err := imp.Import(ctx, importer.ImportParams{
+		Title:        "Lyrics Track",
+		Artist:       "Poet",
+		LicenseCode:  protocol.LicenseCC0,
+		PublisherKey: privKey,
+		AudioData:    bytes.NewReader(audioData),
+		Lyrics:       initialLyrics,
+	})
+	if err != nil {
+		t.Fatalf("import failed: %v", err)
+	}
+
+	// 1. Verify GetTrack has initial lyrics
+	track, err := cat.GetTrack(ctx, m.ContentID)
+	if err != nil {
+		t.Fatalf("GetTrack failed: %v", err)
+	}
+	if track.Lyrics != initialLyrics {
+		t.Fatalf("expected lyrics %q, got %q", initialLyrics, track.Lyrics)
+	}
+
+	// 2. Verify GetManifest contains lyrics
+	manifest, err := cat.GetManifest(ctx, m.ContentID)
+	if err != nil {
+		t.Fatalf("GetManifest failed: %v", err)
+	}
+	if manifest.Lyrics != initialLyrics {
+		t.Fatalf("expected manifest lyrics %q, got %q", initialLyrics, manifest.Lyrics)
+	}
+
+	// 3. Update lyrics via UpdateTrackLyrics
+	updatedLyrics := "[00:02.00] Synchronized line updated\n[00:07.00] Karaoke mode active"
+	if err := cat.UpdateTrackLyrics(ctx, m.ContentID, updatedLyrics); err != nil {
+		t.Fatalf("UpdateTrackLyrics failed: %v", err)
+	}
+
+	trackAfterUpdate, err := cat.GetTrack(ctx, m.ContentID)
+	if err != nil {
+		t.Fatalf("GetTrack after update failed: %v", err)
+	}
+	if trackAfterUpdate.Lyrics != updatedLyrics {
+		t.Fatalf("expected updated lyrics %q, got %q", updatedLyrics, trackAfterUpdate.Lyrics)
+	}
+
+	// 4. Update lyrics on non-existent track returns ErrTrackNotFound
+	if err := cat.UpdateTrackLyrics(ctx, "nonexistent-id", updatedLyrics); !errors.Is(err, catalog.ErrTrackNotFound) {
+		t.Fatalf("expected ErrTrackNotFound, got %v", err)
+	}
+}
