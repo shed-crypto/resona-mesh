@@ -32,7 +32,7 @@ import (
 	"resonamesh/web"
 )
 
-const AppVersion = "0.1.0-alpha"
+var AppVersion = "0.1.0-alpha"
 
 // Syncer coordinates manifest synchronization with connected swarm peers.
 type Syncer interface {
@@ -55,6 +55,7 @@ type Server struct {
 	releaseHandler   *p2p.ReleaseHandler
 	reputationTracker *p2p.PeerReputationTracker
 	publisherKey     ed25519.PrivateKey
+	appVersion       string
 	startTime        time.Time
 	mux              *http.ServeMux
 	handler          http.Handler
@@ -152,6 +153,20 @@ func (s *Server) SetReleaseHandler(rh *p2p.ReleaseHandler) {
 // SetReputationTracker binds the P2P peer reputation tracker.
 func (s *Server) SetReputationTracker(rt *p2p.PeerReputationTracker) {
 	s.reputationTracker = rt
+}
+
+// SetAppVersion sets the application version string.
+func (s *Server) SetAppVersion(v string) {
+	if v != "" {
+		s.appVersion = v
+	}
+}
+
+func (s *Server) effectiveVersion() string {
+	if s.appVersion != "" {
+		return s.appVersion
+	}
+	return AppVersion
 }
 
 
@@ -925,7 +940,7 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"version":             AppVersion,
+		"version":             s.effectiveVersion(),
 		"publisher_key":       pubKeyHex,
 		"data_dir":            s.cfg.DataDir,
 		"storage_quota_bytes": s.cfg.StorageQuotaBytes,
@@ -1814,7 +1829,7 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
         }
     </script>
 </body>
-</html>`, connectedPeers, totalTracks, AppVersion, wanMultiaddr, gistJSON, peerID)
+</html>`, connectedPeers, totalTracks, s.effectiveVersion(), wanMultiaddr, gistJSON, peerID)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -1828,7 +1843,7 @@ func (s *Server) handleUpdaterStatus(w http.ResponseWriter, r *http.Request) {
 	if s.updaterEngine == nil {
 		writeJSON(w, http.StatusOK, updater.State{
 			Status:         updater.StatusIdle,
-			CurrentVersion: AppVersion,
+			CurrentVersion: s.effectiveVersion(),
 		})
 		return
 	}
@@ -1853,7 +1868,7 @@ func (s *Server) handleUpdaterCheck(w http.ResponseWriter, r *http.Request) {
 	if s.updaterEngine == nil {
 		writeJSON(w, http.StatusOK, updater.State{
 			Status:         updater.StatusIdle,
-			CurrentVersion: AppVersion,
+			CurrentVersion: s.effectiveVersion(),
 		})
 		return
 	}
