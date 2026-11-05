@@ -56,10 +56,10 @@ export const EqualizerRack: React.FC<EqualizerRackProps> = ({
                 key={key}
                 onClick={() => onSelectPreset(key)}
                 style={{
-                  background: isSelected ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                  border: isSelected ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+                  background: isSelected ? 'rgba(249, 115, 22, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                  border: isSelected ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
                   borderRadius: 'var(--radius-full)',
-                  color: isSelected ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                  color: isSelected ? 'var(--accent-primary)' : 'var(--text-muted)',
                   padding: '4px 10px',
                   fontSize: '0.74rem',
                   fontWeight: isSelected ? 600 : 400,
@@ -94,10 +94,10 @@ export const EqualizerRack: React.FC<EqualizerRackProps> = ({
           <button
             onClick={onToggleBypass}
             style={{
-              background: isEnabled ? 'rgba(16, 185, 129, 0.15)' : 'none',
-              border: isEnabled ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+              background: isEnabled ? 'rgba(249, 115, 22, 0.15)' : 'none',
+              border: isEnabled ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
               borderRadius: 'var(--radius-sm)',
-              color: isEnabled ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              color: isEnabled ? 'var(--accent-primary)' : 'var(--text-muted)',
               cursor: 'pointer',
               padding: '4px 8px',
               fontSize: '0.72rem',
@@ -163,7 +163,7 @@ export const EqualizerRack: React.FC<EqualizerRackProps> = ({
                   color: !isEnabled
                     ? 'var(--text-muted)'
                     : gain > 0
-                    ? 'var(--accent-emerald)'
+                    ? 'var(--accent-primary)'
                     : gain < 0
                     ? '#38bdf8'
                     : 'var(--text-muted)',
@@ -209,7 +209,7 @@ export const EqualizerRack: React.FC<EqualizerRackProps> = ({
                     transform: 'rotate(-90deg)',
                     width: '140px',
                     cursor: isEnabled ? 'pointer' : 'not-allowed',
-                    accentColor: 'var(--accent-emerald)',
+                    accentColor: 'var(--accent-primary)',
                     opacity: isEnabled ? 1 : 0.4,
                   }}
                 />
@@ -281,12 +281,12 @@ export const EqualizerDrawer: React.FC<EqualizerDrawerProps> = ({
               height: '32px',
               borderRadius: 'var(--radius-md)',
               backgroundColor: rackProps.isEnabled
-                ? 'rgba(16, 185, 129, 0.15)'
+                ? 'rgba(249, 115, 22, 0.15)'
                 : 'rgba(255, 255, 255, 0.05)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: rackProps.isEnabled ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              color: rackProps.isEnabled ? 'var(--accent-primary)' : 'var(--text-muted)',
               transition: 'all 0.2s ease',
             }}
           >
