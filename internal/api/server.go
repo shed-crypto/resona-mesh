@@ -1832,7 +1832,17 @@ func (s *Server) handleUpdaterStatus(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.updaterEngine.State())
+
+	state := s.updaterEngine.State()
+	if s.releaseHandler != nil && state.Status == updater.StatusIdle {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			_, _ = s.releaseHandler.QueryAllPeers(ctx)
+		}()
+	}
+
+	writeJSON(w, http.StatusOK, state)
 }
 
 // handleUpdaterCheck queries connected swarm peers for newer release manifests.

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -108,10 +109,34 @@ func NewEngine(cfg Config) (*Engine, error) {
 		return nil, fmt.Errorf("updater: failed to initialize updates staging directory: %w", err)
 	}
 
-	return &Engine{
+	manifestPath := filepath.Join(updatesDir, "release.json")
+	var initialRelease *protocol.ReleaseManifest
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		var rel protocol.ReleaseManifest
+		if err := json.Unmarshal(data, &rel); err == nil {
+			initialRelease = &rel
+		}
+	}
+
+	eng := &Engine{
 		cfg:    cfg,
 		status: StatusIdle,
-	}, nil
+	}
+
+	if initialRelease != nil {
+		if err := eng.VerifyManifest(initialRelease); err == nil {
+			eng.availableRelease = initialRelease
+			if CompareVersions(initialRelease.Version, cfg.CurrentVersion) > 0 {
+				eng.status = StatusAvailable
+				eng.totalBlocks = len(initialRelease.BlockHashes)
+			}
+			slog.Info("Loaded release manifest from disk for swarm distribution", "version", initialRelease.Version, "path", manifestPath)
+		} else {
+			slog.Warn("Ignoring unverified release manifest on disk", "path", manifestPath, "err", err)
+		}
+	}
+
+	return eng, nil
 }
 
 // SetRemoteFetcher attaches a peer block fetcher once P2P host is online.

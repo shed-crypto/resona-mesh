@@ -58,6 +58,9 @@ func main() {
 		case "sign-rotation":
 			handleSignRotationCLI(os.Args[2:])
 			return
+		case "sign-release":
+			handleSignReleaseCLI(os.Args[2:])
+			return
 		}
 	}
 	// Clean up any previous executable backup (.old) from auto-updates
@@ -691,14 +694,15 @@ func handleSignReleaseCLI(args []string) {
 		os.Exit(1)
 	}
 
-	if *outPath != "" {
-		if err := os.WriteFile(*outPath, jsonBytes, 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to write manifest to %s: %v\n", *outPath, err)
-			os.Exit(1)
-		}
-		fmt.Printf("Release manifest successfully created and saved to %s (binary hash: %s, %d blocks)\n", *outPath, manifest.BinaryHash, len(manifest.BlockHashes))
-	} else {
-		fmt.Println(string(jsonBytes))
+	targetOut := *outPath
+	if targetOut == "" {
+		targetOut = filepath.Join(*dataDir, "updates", "release.json")
 	}
+	_ = os.MkdirAll(filepath.Dir(targetOut), 0755)
+	if err := os.WriteFile(targetOut, jsonBytes, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write manifest to %s: %v\n", targetOut, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Release manifest successfully created and saved to %s (binary hash: %s, %d blocks)\n", targetOut, manifest.BinaryHash, len(manifest.BlockHashes))
 	os.Exit(0)
 }
