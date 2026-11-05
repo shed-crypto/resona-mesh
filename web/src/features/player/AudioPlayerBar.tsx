@@ -239,7 +239,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             right: '24px',
             width: '380px',
             maxHeight: '460px',
-            backgroundColor: 'rgba(16, 19, 26, 0.96)',
+            backgroundColor: 'rgba(26, 26, 29, 0.98)',
             backdropFilter: 'blur(20px)',
             border: '1px solid var(--border-active)',
             borderRadius: 'var(--radius-lg)',
@@ -260,7 +260,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <ListMusic size={17} style={{ color: 'var(--accent-emerald)' }} />
+              <ListMusic size={17} style={{ color: 'var(--accent-primary)' }} />
               <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>Up Next in Swarm Queue</span>
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>({queue.length})</span>
             </div>
@@ -314,8 +314,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                       justifyContent: 'space-between',
                       padding: '8px 12px',
                       borderRadius: 'var(--radius-md)',
-                      backgroundColor: isCurrent ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
-                      border: isCurrent ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid transparent',
+                      backgroundColor: isCurrent ? 'rgba(249, 115, 22, 0.12)' : 'transparent',
+                      border: isCurrent ? '1px solid var(--accent-primary)' : '1px solid transparent',
                       cursor: 'pointer',
                       transition: 'all 0.15s ease',
                     }}
@@ -334,7 +334,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                           style={{
                             fontSize: '0.82rem',
                             fontWeight: isCurrent ? 600 : 500,
-                            color: isCurrent ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                            color: isCurrent ? 'var(--accent-primary)' : 'var(--text-primary)',
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -356,7 +356,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                       </div>
                     </div>
                     {isCurrent && (
-                      <Badge variant="emerald">Now Playing</Badge>
+                      <Badge variant="primary">Now Playing</Badge>
                     )}
                   </div>
                 );
@@ -374,10 +374,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           left: 0,
           right: 0,
           height: '84px',
-          backgroundColor: 'rgba(20, 23, 29, 0.95)',
+          backgroundColor: 'rgba(26, 26, 29, 0.96)',
           backdropFilter: 'blur(16px)',
-          borderTop: '1px solid var(--border-active)',
-          boxShadow: '0 -8px 32px rgba(0, 0, 0, 0.6)',
+          borderTop: '1px solid var(--border-glass)',
+          boxShadow: '0 -4px 24px rgba(0, 0, 0, 0.4)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -405,9 +405,9 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               height: '46px',
               borderRadius: 'var(--radius-md)',
               overflow: 'hidden',
-              border: isPlaying ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+              border: isPlaying ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
               flexShrink: 0,
-              boxShadow: isPlaying ? '0 0 14px rgba(16, 185, 129, 0.25)' : 'none',
+              
               transition: 'all 0.3s ease',
             }}
           >
@@ -498,9 +498,9 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                     alignItems: 'center',
                     gap: '4px',
                     fontSize: '0.65rem',
-                    color: 'var(--accent-emerald)',
-                    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-                    border: '1px solid rgba(16, 185, 129, 0.25)',
+                    color: 'var(--text-muted)',
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid var(--border-glass)',
                     padding: '1px 6px',
                     borderRadius: 'var(--radius-full)',
                     whiteSpace: 'nowrap',
@@ -512,11 +512,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                       width: '5px',
                       height: '5px',
                       borderRadius: '50%',
-                      backgroundColor: 'var(--accent-emerald)',
-                      boxShadow: '0 0 6px var(--accent-emerald)',
+                      backgroundColor: 'var(--accent-primary)',
                     }}
                   />
-                  Live
+                  P2P Stream
                 </span>
               )}
             </div>
@@ -546,7 +545,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: isShuffle ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                  color: isShuffle ? 'var(--accent-primary)' : 'var(--text-muted)',
                   cursor: 'pointer',
                   padding: '6px',
                   display: 'flex',
@@ -587,13 +586,13 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                 width: '38px',
                 height: '38px',
                 borderRadius: 'var(--radius-full)',
-                backgroundColor: isPlaying ? 'var(--accent-emerald)' : 'var(--text-primary)',
-                color: '#000',
+                backgroundColor: isPlaying ? 'var(--accent-primary)' : 'var(--text-primary)',
+                color: isPlaying ? '#ffffff' : '#141416',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 transition: 'all 0.15s ease',
-                boxShadow: isPlaying ? '0 0 16px rgba(16, 185, 129, 0.4)' : 'none',
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
                 cursor: 'pointer',
               }}
             >
@@ -633,7 +632,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: isRepeat ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                  color: isRepeat ? 'var(--accent-primary)' : 'var(--text-muted)',
                   cursor: 'pointer',
                   padding: '6px',
                   display: 'flex',
@@ -670,10 +669,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           <button
             onClick={toggleLyrics}
             style={{
-              background: isLyricsOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
-              border: isLyricsOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+              background: isLyricsOpen ? 'rgba(249, 115, 22, 0.18)' : 'none',
+              border: isLyricsOpen ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
               borderRadius: 'var(--radius-sm)',
-              color: isLyricsOpen ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              color: isLyricsOpen ? 'var(--accent-primary)' : 'var(--text-muted)',
               cursor: 'pointer',
               padding: '6px 8px',
               display: 'inline-flex',
@@ -693,10 +692,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           <button
             onClick={toggleEq}
             style={{
-              background: isEqOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
-              border: isEqOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+              background: isEqOpen ? 'rgba(249, 115, 22, 0.18)' : 'none',
+              border: isEqOpen ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
               borderRadius: 'var(--radius-sm)',
-              color: isEqOpen ? 'var(--accent-emerald)' : eq.isEnabled && eq.preset !== 'flat' ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              color: isEqOpen ? 'var(--accent-primary)' : eq.isEnabled && eq.preset !== 'flat' ? 'var(--accent-primary)' : 'var(--text-muted)',
               cursor: 'pointer',
               padding: '6px 8px',
               display: 'inline-flex',
@@ -717,10 +716,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             <button
               onClick={toggleRateMenu}
               style={{
-                background: playbackRate !== 1.0 ? 'rgba(16, 185, 129, 0.18)' : 'none',
-                border: playbackRate !== 1.0 ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+                background: playbackRate !== 1.0 ? 'rgba(249, 115, 22, 0.18)' : 'none',
+                border: playbackRate !== 1.0 ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
                 borderRadius: 'var(--radius-sm)',
-                color: playbackRate !== 1.0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                color: playbackRate !== 1.0 ? 'var(--accent-primary)' : 'var(--text-muted)',
                 cursor: 'pointer',
                 padding: '6px 8px',
                 display: 'inline-flex',
@@ -742,7 +741,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                   position: 'absolute',
                   bottom: '42px',
                   right: 0,
-                  backgroundColor: 'rgba(16, 19, 26, 0.96)',
+                  backgroundColor: 'rgba(26, 26, 29, 0.98)',
                   backdropFilter: 'blur(20px)',
                   border: '1px solid var(--border-active)',
                   borderRadius: 'var(--radius-md)',
@@ -763,10 +762,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                       setIsRateMenuOpen(false);
                     }}
                     style={{
-                      background: playbackRate === rate ? 'rgba(16, 185, 129, 0.15)' : 'none',
+                      background: playbackRate === rate ? 'rgba(249, 115, 22, 0.15)' : 'none',
                       border: 'none',
                       borderRadius: 'var(--radius-sm)',
-                      color: playbackRate === rate ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                      color: playbackRate === rate ? 'var(--accent-primary)' : 'var(--text-primary)',
                       cursor: 'pointer',
                       padding: '6px 12px',
                       fontSize: '0.75rem',
@@ -787,10 +786,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             <button
               onClick={toggleSleepMenu}
               style={{
-                background: sleepTimer.timerOption !== 0 ? 'rgba(16, 185, 129, 0.18)' : 'none',
-                border: sleepTimer.timerOption !== 0 ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+                background: sleepTimer.timerOption !== 0 ? 'rgba(249, 115, 22, 0.18)' : 'none',
+                border: sleepTimer.timerOption !== 0 ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
                 borderRadius: 'var(--radius-sm)',
-                color: sleepTimer.timerOption !== 0 ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                color: sleepTimer.timerOption !== 0 ? 'var(--accent-primary)' : 'var(--text-muted)',
                 cursor: 'pointer',
                 padding: '6px 8px',
                 display: 'inline-flex',
@@ -814,7 +813,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                   position: 'absolute',
                   bottom: '42px',
                   right: 0,
-                  backgroundColor: 'rgba(16, 19, 26, 0.96)',
+                  backgroundColor: 'rgba(26, 26, 29, 0.98)',
                   backdropFilter: 'blur(20px)',
                   border: '1px solid var(--border-active)',
                   borderRadius: 'var(--radius-md)',
@@ -842,10 +841,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                       setIsSleepMenuOpen(false);
                     }}
                     style={{
-                      background: sleepTimer.timerOption === opt.val ? 'rgba(16, 185, 129, 0.15)' : 'none',
+                      background: sleepTimer.timerOption === opt.val ? 'rgba(249, 115, 22, 0.15)' : 'none',
                       border: 'none',
                       borderRadius: 'var(--radius-sm)',
-                      color: sleepTimer.timerOption === opt.val ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                      color: sleepTimer.timerOption === opt.val ? 'var(--accent-primary)' : 'var(--text-primary)',
                       cursor: 'pointer',
                       padding: '6px 12px',
                       fontSize: '0.75rem',
@@ -866,10 +865,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           <button
             onClick={toggleQueue}
             style={{
-              background: isQueueOpen ? 'rgba(16, 185, 129, 0.18)' : 'none',
-              border: isQueueOpen ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+              background: isQueueOpen ? 'rgba(249, 115, 22, 0.18)' : 'none',
+              border: isQueueOpen ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
               borderRadius: 'var(--radius-sm)',
-              color: isQueueOpen ? 'var(--accent-emerald)' : 'var(--text-muted)',
+              color: isQueueOpen ? 'var(--accent-primary)' : 'var(--text-muted)',
               cursor: 'pointer',
               padding: '6px 8px',
               display: 'inline-flex',
@@ -938,8 +937,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             }}
             title="Open Studio Mode (F)"
             onMouseEnter={(e) => {
-              e.currentTarget.style.color = 'var(--accent-emerald)';
-              e.currentTarget.style.borderColor = 'var(--accent-emerald)';
+              e.currentTarget.style.color = 'var(--accent-primary)';
+              e.currentTarget.style.borderColor = 'var(--accent-primary)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.color = 'var(--text-muted)';
