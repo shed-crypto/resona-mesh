@@ -246,6 +246,7 @@ export const EqualizerDrawer: React.FC<EqualizerDrawerProps> = ({
 
   return (
     <div
+      data-player-popup="eq"
       style={{
         position: 'fixed',
         bottom: '96px',

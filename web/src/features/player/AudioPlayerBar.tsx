@@ -104,26 +104,32 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     setIsLyricsOpen(false);
     setIsEqOpen(false);
     setIsQueueOpen(false);
+    setIsMoreMenuOpen(false);
   };
 
   const toggleLyrics = () => {
     const next = !isLyricsOpen;
     closeAllPopups();
-    setIsLyricsOpen(next);
+    if (next) setIsLyricsOpen(true);
   };
 
   const toggleEq = () => {
     const next = !isEqOpen;
     closeAllPopups();
-    setIsEqOpen(next);
+    if (next) setIsEqOpen(true);
   };
 
   const toggleQueue = () => {
     const next = !isQueueOpen;
     closeAllPopups();
-    setIsQueueOpen(next);
+    if (next) setIsQueueOpen(true);
   };
 
+  const toggleMoreMenu = () => {
+    const next = !isMoreMenuOpen;
+    closeAllPopups();
+    if (next) setIsMoreMenuOpen(true);
+  };
 
   const eq = useAudioEqualizer(audioElement ?? null);
   const sleepTimer = useSleepTimer(
@@ -137,9 +143,14 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     }
   );
 
-
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isLyricsOpen || isEqOpen || isQueueOpen || isMoreMenuOpen) {
+          closeAllPopups();
+          return;
+        }
+      }
       const target = e.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return;
       if (e.key === 'f' || e.key === 'F') {
@@ -148,7 +159,28 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isLyricsOpen, isEqOpen, isQueueOpen, isMoreMenuOpen]);
+
+  useEffect(() => {
+    const anyOpen = isLyricsOpen || isEqOpen || isQueueOpen || isMoreMenuOpen;
+    if (!anyOpen) return;
+
+    const handlePointerDown = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('[data-player-popup], [data-player-trigger]')) {
+        return;
+      }
+      closeAllPopups();
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [isLyricsOpen, isEqOpen, isQueueOpen, isMoreMenuOpen]);
 
   if (!currentTrack) {
     return null;
@@ -229,6 +261,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
       {/* Floating Playback Queue Drawer */}
       {isQueueOpen && (
         <div
+          data-player-popup="queue"
           style={{
             position: 'fixed',
             bottom: '96px',
@@ -723,6 +756,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
         >
           {/* Synchronized Lyrics Toggle */}
           <button
+            data-player-trigger="lyrics"
             onClick={toggleLyrics}
             style={{
               background: isLyricsOpen ? 'rgba(249, 115, 22, 0.18)' : 'none',
@@ -746,6 +780,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
           {/* Studio Equalizer Toggle */}
           <button
+            data-player-trigger="eq"
             onClick={toggleEq}
             style={{
               background: isEqOpen ? 'rgba(249, 115, 22, 0.18)' : 'none',
@@ -769,6 +804,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
           {/* Queue Drawer Toggle */}
           <button
+            data-player-trigger="queue"
             onClick={toggleQueue}
             style={{
               background: isQueueOpen ? 'rgba(249, 115, 22, 0.18)' : 'none',
@@ -793,11 +829,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           {/* More Audio Tools Popover (Radio, Speed, Timer, Download) */}
           <div style={{ position: 'relative' }}>
             <button
-              onClick={() => {
-                const nextState = !isMoreMenuOpen;
-                closeAllPopups();
-                setIsMoreMenuOpen(nextState);
-              }}
+              data-player-trigger="more"
+              onClick={toggleMoreMenu}
               style={{
                 background: (isRadio || playbackRate !== 1.0 || sleepTimer.timerOption !== 0)
                   ? 'rgba(249, 115, 22, 0.18)'
@@ -826,6 +859,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
             {isMoreMenuOpen && (
               <div
+                data-player-popup="more"
                 style={{
                   position: 'absolute',
                   bottom: '44px',

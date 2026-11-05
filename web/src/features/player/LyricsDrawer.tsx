@@ -83,6 +83,7 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
 
   return (
     <div
+      data-player-popup="lyrics"
       style={{
         position: 'fixed',
         bottom: '96px',
