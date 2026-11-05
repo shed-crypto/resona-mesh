@@ -68,11 +68,15 @@ export function useAutoUpdater() {
   useEffect(() => {
     fetchStatus();
 
+    // Quick retry after 2s to pick up initial P2P connection handshake results
+    const quickTimer = window.setTimeout(fetchStatus, 2000);
+
     // Fast polling if currently downloading, otherwise 20s interval
     const intervalMs = state.status === 'downloading' ? 1000 : 20000;
     pollTimerRef.current = window.setInterval(fetchStatus, intervalMs);
 
     return () => {
+      clearTimeout(quickTimer);
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current);
       }

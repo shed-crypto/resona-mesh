@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   HardDrive,
+  Sparkles,
   Server,
   ShieldCheck,
   CheckCircle2,
@@ -24,6 +25,7 @@ interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSettingsUpdated?: () => void;
+  onOpenUpdater?: () => void;
 }
 
 const QUOTA_PRESETS = [
@@ -39,6 +41,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   onSettingsUpdated,
+  onOpenUpdater,
 }) => {
   const [storageUsage, setStorageUsage] = useState<StorageUsage | null>(null);
   const [settings, setSettings] = useState<NodeSettings | null>(null);
@@ -480,7 +483,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {transferMode === 'view' && (
               <>
                 <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                  Ваш унікальний публічний ключ Ed25519 закріплює за вами авторство треків і плейлистів у децентралізованому рої.
+                  Your unique Ed25519 public key certifies authorship of tracks and playlists across the decentralized swarm.
                 </p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div
@@ -526,12 +529,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {transferMode === 'export' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                  Зашифруйте свій приватний ключ паролем, щоб безпечно перенести його на другий ПК чи ноутбук:
+                  Encrypt your private key with a passphrase to securely transfer it to another computer or device:
                 </p>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type="password"
-                    placeholder="Пароль для шифрування (мін. 8 символів)..."
+                    placeholder="Passphrase for encryption (min. 8 characters)..."
                     value={exportPassphrase}
                     onChange={(e) => setExportPassphrase(e.target.value)}
                     style={{
@@ -552,7 +555,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onClick={handleExportIdentity}
                     icon={<KeyRound size={14} />}
                   >
-                    {exportLoading ? 'Шифрування...' : 'Експортувати'}
+                    {exportLoading ? 'Encrypting...' : 'Export Key'}
                   </Button>
                 </div>
 
@@ -590,7 +593,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         }}
                         icon={copiedExport ? <Check size={13} /> : <Copy size={13} />}
                       >
-                        {copiedExport ? 'Скопійовано JSON!' : 'Скопіювати JSON'}
+                        {copiedExport ? 'Copied JSON!' : 'Copy JSON'}
                       </Button>
                       <Button
                         type="button"
@@ -608,7 +611,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         }}
                         icon={<Download size={13} />}
                       >
-                        Завантажити файл .json
+                        Download .json Keyfile
                       </Button>
                     </div>
                   </div>
@@ -619,10 +622,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {transferMode === 'import' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                  Вставте зашифрований JSON-бандл з першого ПК, щоб перенести свій акаунт:
+                  Paste the encrypted JSON bundle from your other PC to transfer your identity:
                 </p>
                 <textarea
-                  placeholder="Вставте JSON ключ (починається з { &quot;kdf&quot;... })..."
+                  placeholder="Paste encrypted JSON bundle (starts with { &quot;kdf&quot;... })..."
                   value={importBundleText}
                   onChange={(e) => setImportBundleText(e.target.value)}
                   rows={2}
@@ -642,7 +645,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type="password"
-                    placeholder="Введіть пароль розшифрування..."
+                    placeholder="Enter decryption passphrase..."
                     value={importPassphrase}
                     onChange={(e) => setImportPassphrase(e.target.value)}
                     style={{
@@ -663,7 +666,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onClick={handleImportIdentity}
                     icon={<FileText size={14} />}
                   >
-                    {importLoading ? 'Імпорт...' : 'Застосувати ключ'}
+                    {importLoading ? 'Importing...' : 'Apply Key'}
                   </Button>
                 </div>
 
@@ -720,7 +723,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               )}
             </div>
             <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-              Публічна глобальна адреса вашого вузла для прямого з'єднання через інтернет (STUN/UPnP).
+              Public global endpoint of your node for direct P2P connections across the internet (STUN/UPnP).
             </p>
             <div
               style={{
@@ -765,7 +768,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </label>
             </div>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
-              Автоматично реплікує рідкісні треки (&lt; 2 копій у рої) у фоновому режимі. Миттєво призупиняється при відтворенні музики.
+              Automatically replicates rare tracks (&lt; 2 copies observed in swarm) in background. Yields instantly during playback.
             </p>
           </div>
 
@@ -774,6 +777,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <div><ShieldCheck size={13} style={{ verticalAlign: 'middle', marginRight: '6px', color: 'var(--accent-emerald)' }} /> Local HTTP API: <code style={{ color: 'var(--text-primary)' }}>{settings.http_addr}</code></div>
               <div><ShieldCheck size={13} style={{ verticalAlign: 'middle', marginRight: '6px', color: 'var(--accent-emerald)' }} /> Swarm P2P Listen Port: <code style={{ color: 'var(--text-primary)' }}>{settings.p2p_port}</code></div>
+            </div>
+          )}
+
+          {/* Autonomous P2P Client Updates */}
+          {onOpenUpdater && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 16px',
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-glass)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Sparkles size={16} style={{ color: 'var(--accent-cyan)' }} />
+                <div>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Software Updates & Releases
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    Autonomous cryptographic verification and P2P distribution
+                  </div>
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  onClose();
+                  onOpenUpdater();
+                }}
+              >
+                Check for Updates
+              </Button>
             </div>
           )}
 

@@ -112,7 +112,20 @@ export const NodeStatusPanel: React.FC = () => {
             }}
           />
           <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>ResonaMesh</span>
-          <Badge variant="neutral">v{status.version}</Badge>
+          <button
+            type="button"
+            onClick={() => setIsUpdaterOpen(true)}
+            title="ResonaMesh version & P2P updates. Click to check for updates."
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              display: 'inline-flex',
+            }}
+          >
+            <Badge variant="neutral">v{status.version}</Badge>
+          </button>
           {/* Swarm P2P Auto-Updater Indicator */}
           {updaterState.status === 'available' && (
             <button
@@ -380,6 +393,7 @@ export const NodeStatusPanel: React.FC = () => {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         onSettingsUpdated={() => refresh()}
+        onOpenUpdater={() => setIsUpdaterOpen(true)}
       />
       <UpdaterModal isOpen={isUpdaterOpen} onClose={() => setIsUpdaterOpen(false)} />
     </>

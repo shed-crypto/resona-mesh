@@ -462,6 +462,17 @@ func main() {
 		apiServer.SetUpdater(updaterEngine)
 		releaseHandler = p2p.NewReleaseHandler(p2pHost, updaterEngine)
 		apiServer.SetReleaseHandler(releaseHandler)
+
+		if updaterEngine.State().AvailableRelease != nil {
+			go func() {
+				time.Sleep(3 * time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if count, err := releaseHandler.BroadcastRelease(ctx, updaterEngine.State().AvailableRelease); err == nil && count > 0 {
+					slog.Info("Proactively announced local release to connected peers", "peers_notified", count)
+				}
+			}()
+		}
 	}
 
 	// 12. Wire P2P dependencies and launch HTTP server if not co-hosted
