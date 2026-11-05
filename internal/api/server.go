@@ -159,6 +159,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/pin", s.handlePinTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/unpin", s.handleUnpinTrack)
 	s.mux.HandleFunc("PUT /api/v1/tracks/{id}/lyrics", s.handleUpdateTrackLyrics)
+	s.mux.HandleFunc("GET /api/v1/tracks/{id}/recommendations", s.handleTrackRecommendations)
+	s.mux.HandleFunc("PUT /api/v1/tracks/{id}/metadata", s.handleUpdateTrackMetadata)
 	s.mux.HandleFunc("DELETE /api/v1/tracks/{id}", s.handleDeleteTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/import", s.handleImportTrack)
 	s.mux.HandleFunc("GET /api/v1/stream/{id}", s.handleStream)
@@ -428,6 +430,82 @@ func (s *Server) handleUpdateTrackLyrics(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+
+
+// handleTrackRecommendations returns top recommended tracks for a given seed track.
+func (s *Server) handleTrackRecommendations(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	limit := 10
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	recs, err := s.catalog.GetRecommendations(r.Context(), id, limit)
+	if err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to get recommendations: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"content_id":      id,
+		"recommendations": recs,
+	})
+}
+
+// handleUpdateTrackMetadata updates genre, tags, bpm, and mood for an existing track.
+func (s *Server) handleUpdateTrackMetadata(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "headless relay mode active: mutations are disabled")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	var req struct {
+		Genre string   `json:"genre"`
+		Tags  []string `json:"tags"`
+		BPM   int      `json:"bpm"`
+		Mood  string   `json:"mood"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json request body: "+err.Error())
+		return
+	}
+
+	if err := s.catalog.UpdateTrackMetadata(r.Context(), id, req.Genre, req.Tags, req.BPM, req.Mood); err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to update track metadata: "+err.Error())
+		return
+	}
+
+	updated, err := s.catalog.GetTrack(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to load updated track")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "updated",
+		"track":  updated,
+	})
+}
 // handleDeleteTrack removes a track from the catalog.
 func (s *Server) handleDeleteTrack(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Headless {
@@ -480,6 +558,26 @@ func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
 	artist := strings.TrimSpace(r.FormValue("artist"))
 	description := strings.TrimSpace(r.FormValue("description"))
 	lyrics := strings.TrimSpace(r.FormValue("lyrics"))
+	genre := strings.TrimSpace(r.FormValue("genre"))
+	mood := strings.TrimSpace(r.FormValue("mood"))
+	bpm := 0
+	if b := r.FormValue("bpm"); b != "" {
+		if parsed, err := strconv.Atoi(b); err == nil && parsed >= 0 {
+			bpm = parsed
+		}
+	}
+	var tags []string
+	if rawTags := r.FormValue("tags"); rawTags != "" {
+		if strings.HasPrefix(strings.TrimSpace(rawTags), "[") {
+			_ = json.Unmarshal([]byte(rawTags), &tags)
+		} else {
+			for _, part := range strings.Split(rawTags, ",") {
+				if t := strings.TrimSpace(part); t != "" {
+					tags = append(tags, t)
+				}
+			}
+		}
+	}
 	licenseCode := strings.TrimSpace(r.FormValue("license"))
 	if licenseCode == "" {
 		licenseCode = protocol.LicenseCCBY40
@@ -519,6 +617,10 @@ func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
 		Artist:       artist,
 		Description:  description,
 		Lyrics:       lyrics,
+		Genre:        genre,
+		Tags:         tags,
+		BPM:          bpm,
+		Mood:         mood,
 		DurationMs:   durationMs,
 		BitrateKbps:  bitrateKbps,
 		LicenseCode:  licenseCode,
