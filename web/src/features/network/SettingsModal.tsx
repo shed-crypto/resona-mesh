@@ -11,10 +11,13 @@ import {
   Copy,
   Check,
   Zap,
+  Download,
+  KeyRound,
+  FileText,
 } from 'lucide-react';
 import { Modal } from '../../shared/components/Modal';
 import { Button } from '../../shared/components/Button';
-import { apiClient } from '../../shared/api/client';
+import { apiClient, type EncryptedKeyBundle } from '../../shared/api/client';
 import type { StorageUsage, NodeSettings } from '../../types/node';
 
 interface SettingsModalProps {
@@ -49,6 +52,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [copiedKey, setCopiedKey] = useState(false);
   const [copiedWAN, setCopiedWAN] = useState(false);
 
+  // Identity Transfer State
+  const [transferMode, setTransferMode] = useState<'view' | 'export' | 'import'>('view');
+  const [exportPassphrase, setExportPassphrase] = useState('');
+  const [exportedBundle, setExportedBundle] = useState<EncryptedKeyBundle | null>(null);
+  const [copiedExport, setCopiedExport] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const [importPassphrase, setImportPassphrase] = useState('');
+  const [importBundleText, setImportBundleText] = useState('');
+  const [importLoading, setImportLoading] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importSuccess, setImportSuccess] = useState<string | null>(null);
+
   const formatBytes = (bytes: number) => {
     if (bytes <= 0) return '0.0 KiB';
     if (bytes < 1024 * 1024) {
@@ -65,6 +82,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setLoading(true);
       setError(null);
       setSavedSuccess(false);
+      setTransferMode('view');
+      setExportedBundle(null);
+      setExportError(null);
+      setImportError(null);
+      setImportSuccess(null);
 
       Promise.all([apiClient.getStorage(), apiClient.getSettings()])
         .then(([storageData, settingsData]) => {
@@ -95,6 +117,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     navigator.clipboard.writeText(settings.wan_address);
     setCopiedWAN(true);
     setTimeout(() => setCopiedWAN(false), 2000);
+  };
+
+  const handleExportIdentity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (exportPassphrase.length < 8) {
+      setExportError('Passphrase must be at least 8 characters');
+      return;
+    }
+    setExportLoading(true);
+    setExportError(null);
+    try {
+      const bundle = await apiClient.exportIdentity(exportPassphrase);
+      setExportedBundle(bundle);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to export identity';
+      setExportError(msg);
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleImportIdentity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!importBundleText.trim()) {
+      setImportError('Please paste the encrypted JSON key bundle');
+      return;
+    }
+    if (!importPassphrase) {
+      setImportError('Please enter the decryption passphrase');
+      return;
+    }
+
+    setImportLoading(true);
+    setImportError(null);
+    setImportSuccess(null);
+
+    try {
+      const bundleObj = JSON.parse(importBundleText.trim()) as EncryptedKeyBundle;
+      const res = await apiClient.importIdentity(bundleObj, importPassphrase);
+      setImportSuccess(`Identity imported successfully! Key: ${res.public_key.slice(0, 12)}... Please restart ResonaMesh to activate.`);
+      setImportBundleText('');
+      setImportPassphrase('');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to import identity bundle';
+      setImportError(msg);
+    } finally {
+      setImportLoading(false);
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -187,12 +257,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <HardDrive size={16} style={{ color: 'var(--accent-emerald)' }} />
                 <span>Storage Cache Limit</span>
               </div>
-              <span style={{ fontSize: '0.82rem', fontFamily: 'var(--font-mono)', color: quotaMB === 0 ? 'var(--accent-amber)' : 'var(--accent-emerald)', fontWeight: 600 }}>
-                {quotaMB === 0 ? '0 MB (Pure Streamer)' : quotaMB >= 1024 ? `${(quotaMB / 1024).toFixed(1)} GiB` : `${quotaMB} MiB`}
+              <span style={{ fontSize: '0.85rem', fontFamily: 'var(--font-mono)', color: quotaMB === 0 ? 'var(--accent-amber)' : 'var(--accent-emerald)', fontWeight: 600 }}>
+                {quotaMB === 0 ? '0 MB (Pure Streamer)' : quotaMB >= 1024 ? `${(quotaMB / 1024).toFixed(2)} GiB` : `${quotaMB} MiB`}
               </span>
             </div>
 
-            {/* Quick preset selector */}
+            {/* Quick preset buttons */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
               {QUOTA_PRESETS.map((preset) => (
                 <button
@@ -215,27 +285,50 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ))}
             </div>
 
-            {/* Range slider for smooth quota adjustment */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <input
-                type="range"
-                min={0}
-                max={10240}
-                step={256}
-                value={quotaMB}
-                onChange={(e) => setQuotaMB(Number(e.target.value))}
-                style={{
-                  flex: 1,
-                  accentColor: 'var(--accent-emerald)',
-                  cursor: 'pointer',
-                }}
-              />
-              <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', minWidth: '60px', textAlign: 'right' }}>
-                {quotaMB} MB
-              </span>
+            {/* Direct manual numeric input and range slider */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <input
+                  type="range"
+                  min={0}
+                  max={10240}
+                  step={128}
+                  value={quotaMB}
+                  onChange={(e) => setQuotaMB(Number(e.target.value))}
+                  style={{
+                    flex: 1,
+                    accentColor: 'var(--accent-emerald)',
+                    cursor: 'pointer',
+                  }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="number"
+                    min={0}
+                    max={102400}
+                    value={quotaMB}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      setQuotaMB(isNaN(val) ? 0 : Math.max(0, val));
+                    }}
+                    style={{
+                      width: '84px',
+                      padding: '5px 8px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.35)',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--text-primary)',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.8rem',
+                      textAlign: 'right',
+                    }}
+                  />
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>MB</span>
+                </div>
+              </div>
             </div>
 
-            {/* Zero Cache / Pure Streaming explanation callout */}
+            {/* Pure Streamer Mode Alert */}
             {quotaMB === 0 && (
               <div
                 style={{
@@ -253,7 +346,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               >
                 <Zap size={14} style={{ flexShrink: 0 }} />
                 <span>
-                  <strong>Pure Online Streaming Mode:</strong> Audio chunks are retained in RAM volatile buffer during playback and are not cached permanently to disk.
+                  <strong>Pure Online Streaming:</strong> 0 MB disk cache. Audio is streamed on-demand through volatile RAM without saving permanent chunk files to disk.
                 </span>
               </div>
             )}
@@ -269,7 +362,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     backgroundColor: 'rgba(255, 255, 255, 0.08)',
                     overflow: 'hidden',
                     display: 'flex',
-                    marginTop: '4px',
+                    marginTop: '2px',
                   }}
                 >
                   <div
@@ -316,62 +409,275 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
           </div>
 
-          {/* User Profile & Device Identity Transfer */}
+          {/* User Profile & Multi-Device Identity Transfer */}
           <div
             style={{
               display: 'flex',
               flexDirection: 'column',
-              gap: '10px',
+              gap: '12px',
               padding: '16px',
               backgroundColor: 'var(--bg-card)',
               borderRadius: 'var(--radius-md)',
               border: '1px solid var(--border-glass)',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontWeight: 600 }}>
                 <Key size={16} style={{ color: 'var(--accent-amber)' }} />
-                <span>Node Identity (User Publisher Key)</span>
+                <span>Account Identity & Multi-Device Transfer</span>
               </div>
-              {settings?.publisher_key && (
+
+              {/* Mode switcher tabs */}
+              <div style={{ display: 'flex', gap: '4px' }}>
                 <button
                   type="button"
-                  onClick={handleCopyKey}
+                  onClick={() => setTransferMode('view')}
                   style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
                     padding: '3px 8px',
                     fontSize: '0.72rem',
                     borderRadius: 'var(--radius-sm)',
-                    border: copiedKey ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid var(--border-glass)',
-                    backgroundColor: copiedKey ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                    color: copiedKey ? 'var(--accent-emerald)' : 'var(--text-secondary)',
+                    border: transferMode === 'view' ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
+                    backgroundColor: transferMode === 'view' ? 'rgba(249, 115, 22, 0.15)' : 'transparent',
+                    color: transferMode === 'view' ? 'var(--accent-primary)' : 'var(--text-muted)',
                     cursor: 'pointer',
                   }}
                 >
-                  {copiedKey ? <Check size={12} /> : <Copy size={12} />}
-                  <span>{copiedKey ? 'Copied Key!' : 'Copy Key'}</span>
+                  Public Key
                 </button>
-              )}
+                <button
+                  type="button"
+                  onClick={() => setTransferMode('export')}
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: '0.72rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: transferMode === 'export' ? '1px solid var(--accent-emerald)' : '1px solid var(--border-glass)',
+                    backgroundColor: transferMode === 'export' ? 'rgba(16, 185, 129, 0.15)' : 'transparent',
+                    color: transferMode === 'export' ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Export to Other PC
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTransferMode('import')}
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: '0.72rem',
+                    borderRadius: 'var(--radius-sm)',
+                    border: transferMode === 'import' ? '1px solid var(--accent-sky)' : '1px solid var(--border-glass)',
+                    backgroundColor: transferMode === 'import' ? 'rgba(0, 255, 204, 0.15)' : 'transparent',
+                    color: transferMode === 'import' ? 'var(--accent-sky)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Import Key
+                </button>
+              </div>
             </div>
-            <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-              Цей криптографічний ключ Ed25519 закріплює за вами авторство треків і плейлистів у децентралізованому рої.
-            </p>
-            <div
-              style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.72rem',
-                padding: '8px 10px',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'rgba(0, 0, 0, 0.35)',
-                border: '1px solid var(--border-glass)',
-                color: 'var(--accent-primary)',
-                wordBreak: 'break-all',
-              }}
-            >
-              {settings?.publisher_key || 'Loading identity key...'}
-            </div>
+
+            {transferMode === 'view' && (
+              <>
+                <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                  Ваш унікальний публічний ключ Ed25519 закріплює за вами авторство треків і плейлистів у децентралізованому рої.
+                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.72rem',
+                      padding: '8px 10px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'rgba(0, 0, 0, 0.35)',
+                      border: '1px solid var(--border-glass)',
+                      color: 'var(--accent-primary)',
+                      wordBreak: 'break-all',
+                    }}
+                  >
+                    {settings?.publisher_key || 'Loading identity key...'}
+                  </div>
+                  {settings?.publisher_key && (
+                    <button
+                      type="button"
+                      onClick={handleCopyKey}
+                      style={{
+                        padding: '8px 10px',
+                        fontSize: '0.72rem',
+                        borderRadius: 'var(--radius-sm)',
+                        border: copiedKey ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid var(--border-glass)',
+                        backgroundColor: copiedKey ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                        color: copiedKey ? 'var(--accent-emerald)' : 'var(--text-secondary)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      {copiedKey ? <Check size={13} /> : <Copy size={13} />}
+                      <span>{copiedKey ? 'Copied!' : 'Copy'}</span>
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+
+            {transferMode === 'export' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                  Зашифруйте свій приватний ключ паролем, щоб безпечно перенести його на другий ПК чи ноутбук:
+                </p>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="password"
+                    placeholder="Пароль для шифрування (мін. 8 символів)..."
+                    value={exportPassphrase}
+                    onChange={(e) => setExportPassphrase(e.target.value)}
+                    style={{
+                      flex: 1,
+                      padding: '7px 10px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.35)',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.8rem',
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="primary"
+                    disabled={exportLoading || exportPassphrase.length < 8}
+                    onClick={handleExportIdentity}
+                    icon={<KeyRound size={14} />}
+                  >
+                    {exportLoading ? 'Шифрування...' : 'Експортувати'}
+                  </Button>
+                </div>
+
+                {exportError && (
+                  <div style={{ color: 'var(--accent-rose)', fontSize: '0.74rem' }}>{exportError}</div>
+                )}
+
+                {exportedBundle && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                    <div
+                      style={{
+                        padding: '8px 10px',
+                        backgroundColor: 'rgba(0, 0, 0, 0.45)',
+                        border: '1px solid var(--border-glass)',
+                        borderRadius: 'var(--radius-sm)',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '0.7rem',
+                        color: 'var(--text-secondary)',
+                        wordBreak: 'break-all',
+                        maxHeight: '70px',
+                        overflowY: 'auto',
+                      }}
+                    >
+                      {JSON.stringify(exportedBundle)}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          navigator.clipboard.writeText(JSON.stringify(exportedBundle, null, 2));
+                          setCopiedExport(true);
+                          setTimeout(() => setCopiedExport(false), 2000);
+                        }}
+                        icon={copiedExport ? <Check size={13} /> : <Copy size={13} />}
+                      >
+                        {copiedExport ? 'Скопійовано JSON!' : 'Скопіювати JSON'}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          const jsonStr = JSON.stringify(exportedBundle, null, 2);
+                          const blob = new Blob([jsonStr], { type: 'application/json' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `resonamesh-identity-${exportedBundle.public_key.slice(0, 8)}.json`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        icon={<Download size={13} />}
+                      >
+                        Завантажити файл .json
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {transferMode === 'import' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                  Вставте зашифрований JSON-бандл з першого ПК, щоб перенести свій акаунт:
+                </p>
+                <textarea
+                  placeholder="Вставте JSON ключ (починається з { &quot;kdf&quot;... })..."
+                  value={importBundleText}
+                  onChange={(e) => setImportBundleText(e.target.value)}
+                  rows={2}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+                    border: '1px solid var(--border-glass)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-primary)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.72rem',
+                    resize: 'vertical',
+                    boxSizing: 'border-box',
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="password"
+                    placeholder="Введіть пароль розшифрування..."
+                    value={importPassphrase}
+                    onChange={(e) => setImportPassphrase(e.target.value)}
+                    style={{
+                      flex: 1,
+                      padding: '7px 10px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.35)',
+                      border: '1px solid var(--border-glass)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.8rem',
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="primary"
+                    disabled={importLoading || !importBundleText || !importPassphrase}
+                    onClick={handleImportIdentity}
+                    icon={<FileText size={14} />}
+                  >
+                    {importLoading ? 'Імпорт...' : 'Застосувати ключ'}
+                  </Button>
+                </div>
+
+                {importError && (
+                  <div style={{ color: 'var(--accent-rose)', fontSize: '0.74rem' }}>{importError}</div>
+                )}
+
+                {importSuccess && (
+                  <div style={{ color: 'var(--accent-emerald)', fontSize: '0.74rem', fontWeight: 500 }}>
+                    {importSuccess}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Global WAN Multiaddress */}
