@@ -40,6 +40,7 @@ export const UpdaterModal: React.FC<UpdaterModalProps> = ({ isOpen, onClose }) =
         justifyContent: 'center',
         zIndex: 1000,
         padding: '20px',
+        overflowY: 'auto',
       }}
       onClick={onClose}
     >
@@ -47,6 +48,7 @@ export const UpdaterModal: React.FC<UpdaterModalProps> = ({ isOpen, onClose }) =
         style={{
           width: '100%',
           maxWidth: '520px',
+          maxHeight: 'calc(100vh - 40px)',
           backgroundColor: '#14171d',
           border: '1px solid var(--border-active)',
           borderRadius: 'var(--radius-lg)',
@@ -54,6 +56,7 @@ export const UpdaterModal: React.FC<UpdaterModalProps> = ({ isOpen, onClose }) =
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
+          margin: 'auto',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -90,7 +93,7 @@ export const UpdaterModal: React.FC<UpdaterModalProps> = ({ isOpen, onClose }) =
         </div>
 
         {/* Content */}
-        <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
           {/* Current Version Bar */}
           <div
             style={{
@@ -329,14 +332,26 @@ export const UpdaterModal: React.FC<UpdaterModalProps> = ({ isOpen, onClose }) =
                 display: 'flex',
                 alignItems: 'flex-start',
                 gap: '10px',
+                minWidth: 0,
+                width: '100%',
+                boxSizing: 'border-box',
               }}
             >
               <AlertTriangle size={18} style={{ color: 'var(--accent-rose)', flexShrink: 0, marginTop: '2px' }} />
-              <div>
+              <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-rose)' }}>
                   Update Error
                 </div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                <div
+                  style={{
+                    fontSize: '0.8rem',
+                    color: 'var(--text-secondary)',
+                    marginTop: '4px',
+                    wordBreak: 'break-word',
+                    overflowWrap: 'anywhere',
+                    lineHeight: 1.45,
+                  }}
+                >
                   {state.error_message || 'An error occurred during update processing.'}
                 </div>
               </div>

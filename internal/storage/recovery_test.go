@@ -2,6 +2,7 @@ package storage_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,3 +169,56 @@ func TestRecoverCorruptedBlocks(t *testing.T) {
 		t.Fatalf("expected is_stored to be reset to 0 for corrupted block, got: %d", isStored)
 	}
 }
+
+func TestRecoverProtectsReleaseBlocks(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	db, err := storage.Open(filepath.Join(tmpDir, "catalog.db"))
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	defer db.Close()
+
+	bs, err := storage.NewBlockStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to open blockstore: %v", err)
+	}
+
+	releaseChunk := []byte("binary-release-executable-chunk-data")
+	chunkHash := crypto.HashChunkHex(releaseChunk)
+
+	if err := bs.Put(chunkHash, releaseChunk); err != nil {
+		t.Fatalf("failed to store release chunk: %v", err)
+	}
+
+	// Create updates/release.json containing this block hash
+	updatesDir := filepath.Join(tmpDir, "updates")
+	if err := os.MkdirAll(updatesDir, 0755); err != nil {
+		t.Fatalf("failed to create updates dir: %v", err)
+	}
+
+	manifestJSON := fmt.Sprintf(`{
+		"schema_version": "resonamesh:release:v1",
+		"version": "0.1.2-alpha",
+		"block_hashes": ["%s"]
+	}`, chunkHash)
+
+	if err := os.WriteFile(filepath.Join(updatesDir, "release.json"), []byte(manifestJSON), 0644); err != nil {
+		t.Fatalf("failed to write release.json: %v", err)
+	}
+
+	report, err := storage.Recover(ctx, tmpDir, db, bs)
+	if err != nil {
+		t.Fatalf("Recover failed: %v", err)
+	}
+
+	if report.OrphanFilesRemoved != 0 {
+		t.Fatalf("expected 0 orphans removed, got: %d", report.OrphanFilesRemoved)
+	}
+
+	if !bs.Has(chunkHash) {
+		t.Fatal("expected release chunk to be preserved on disk")
+	}
+}
+

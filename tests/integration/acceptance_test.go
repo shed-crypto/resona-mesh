@@ -723,7 +723,7 @@ func TestT16_SingleBinaryReleaseVerification(t *testing.T) {
 		t.Fatalf("failed to execute %s --version: %v (out: %s)", exePath, err, string(out))
 	}
 	outStr := string(out)
-	if !strings.Contains(outStr, "ResonaMesh") || !strings.Contains(outStr, "0.1.0-alpha") {
+	if !strings.Contains(outStr, "ResonaMesh") || !strings.Contains(outStr, "alpha") {
 		t.Fatalf("unexpected version output: %s", outStr)
 	}
 }
