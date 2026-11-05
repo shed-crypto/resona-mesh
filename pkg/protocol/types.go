@@ -16,6 +16,10 @@ type Manifest struct {
 	LicenseCode     string   `json:"license_code"`
 	Signature       string   `json:"signature"`
 	Lyrics          string   `json:"lyrics,omitempty"`
+	Genre           string   `json:"genre,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
+	BPM             int      `json:"bpm,omitempty"`
+	Mood            string   `json:"mood,omitempty"`
 }
 
 // BlockRequest requests an individual 256 KiB audio chunk by index.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,10 @@ type ImportParams struct {
 	Artist       string
 	Description  string
 	Lyrics       string
+	Genre        string
+	Tags         []string
+	BPM          int
+	Mood         string
 	DurationMs   int64
 	BitrateKbps  int
 	LicenseCode  string
@@ -155,6 +160,11 @@ func (imp *Importer) Import(ctx context.Context, params ImportParams) (*protocol
 		ContentID:       contentID,
 		Title:           params.Title,
 		Artist:          params.Artist,
+		Lyrics:          params.Lyrics,
+		Genre:           params.Genre,
+		Tags:            params.Tags,
+		BPM:             params.BPM,
+		Mood:            params.Mood,
 		DurationMs:      params.DurationMs,
 		BitrateKbps:     params.BitrateKbps,
 		TotalSizeBytes:  totalBytes,
@@ -177,12 +187,19 @@ func (imp *Importer) Import(ctx context.Context, params ImportParams) (*protocol
 	}
 	defer tx.Rollback()
 
+	tagsJSON := "[]"
+	if len(params.Tags) > 0 {
+		if b, err := json.Marshal(params.Tags); err == nil {
+			tagsJSON = string(b)
+		}
+	}
+
 	insertTrackSQL := `
 	INSERT INTO tracks (
 		content_id, title, artist, description, lyrics, duration_ms, bitrate_kbps,
 		total_size_bytes, block_size, block_count, publisher_key, published_at,
-		license_code, signature, pinned, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		license_code, signature, genre, tags_json, bpm, mood, pinned, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = tx.ExecContext(ctx, insertTrackSQL,
 		manifest.ContentID,
@@ -199,6 +216,10 @@ func (imp *Importer) Import(ctx context.Context, params ImportParams) (*protocol
 		manifest.PublishedAt,
 		manifest.LicenseCode,
 		manifest.Signature,
+		params.Genre,
+		tagsJSON,
+		params.BPM,
+		params.Mood,
 		1, // pinned = 1 for locally imported audio
 		now,
 	)

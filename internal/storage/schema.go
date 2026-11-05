@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS tracks (
     published_at INTEGER NOT NULL,
     license_code TEXT NOT NULL,
     signature TEXT NOT NULL,
+    genre TEXT NOT NULL DEFAULT '',
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    bpm INTEGER NOT NULL DEFAULT 0,
+    mood TEXT NOT NULL DEFAULT '',
     pinned INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
 );
