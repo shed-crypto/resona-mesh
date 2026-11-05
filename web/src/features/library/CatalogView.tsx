@@ -3,6 +3,7 @@ import { Plus, Disc3, RefreshCw, AlertCircle, ListMusic, Loader2 } from 'lucide-
 import type { Track } from '../../types/track';
 import { useCatalog } from '../../shared/hooks/useCatalog';
 import { useRecommendations } from '../../shared/hooks/useRecommendations';
+import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
 import { TrackCard } from './TrackCard';
 import { SearchBar } from './SearchBar';
 import { ImportModal } from './ImportModal';
@@ -53,6 +54,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   } = useCatalog();
 
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const { status: nodeStatus } = useNodeStatus();
   const { recommendedTracks, topArtists } = useRecommendations(tracks);
   const observerTarget = useRef<HTMLDivElement | null>(null);
 
@@ -256,6 +258,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                 track={track}
                 isActiveTrack={currentTrack?.content_id === track.content_id}
                 isPlaying={isPlaying}
+                connectedPeers={nodeStatus?.connected_peers ?? 0}
                 onPlay={() => {
                   if (currentTrack?.content_id === track.content_id && onTogglePlay) {
                     onTogglePlay();
