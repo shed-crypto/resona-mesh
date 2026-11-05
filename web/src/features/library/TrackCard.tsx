@@ -1,7 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Play, Pause, Pin, Trash2, ShieldCheck, Flag, Ban, ListPlus, Download } from 'lucide-react';
 import type { Track } from '../../types/track';
-import { Badge } from '../../shared/components/Badge';
 import { generateCoverDataUri } from '../../shared/utils/artwork';
 import { apiClient } from '../../shared/api/client';
 
@@ -26,6 +25,8 @@ export const TrackCard: React.FC<TrackCardProps> = ({
   onReport,
   onAddToPlaylist,
 }) => {
+  const [isHovered, setIsHovered] = useState(false);
+
   const formatDuration = (ms: number) => {
     if (!ms) return '0:00';
     const totalSeconds = Math.floor(ms / 1000);
@@ -34,79 +35,77 @@ export const TrackCard: React.FC<TrackCardProps> = ({
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  const formatBytes = (bytes: number) => {
-    if (bytes < 1024 * 1024) {
-      return `${(bytes / 1024).toFixed(1)} KiB`;
-    }
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
-  };
-
-  const isFullAvailable = track.availability_pct >= 99.9;
   const fallbackCoverUri = generateCoverDataUri(track.content_id, track.title);
   const coverArtUri = track.has_cover ? apiClient.getCoverUrl(track.content_id) : fallbackCoverUri;
 
   return (
     <div
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '14px 18px',
-        backgroundColor: isActiveTrack ? 'var(--bg-hover)' : 'var(--bg-surface)',
+        padding: '10px 16px',
+        backgroundColor: isActiveTrack
+          ? 'rgba(249, 115, 22, 0.08)'
+          : isHovered
+          ? 'var(--bg-hover)'
+          : 'var(--bg-surface)',
         border: isActiveTrack
-          ? '1px solid var(--accent-emerald)'
+          ? '1px solid rgba(249, 115, 22, 0.3)'
           : '1px solid var(--border-glass)',
-        borderRadius: 'var(--radius-lg)',
-        boxShadow: isActiveTrack ? '0 0 20px rgba(16, 185, 129, 0.15)' : 'none',
-        transition: 'all 0.2s ease',
+        borderRadius: 'var(--radius-md)',
+        transition: 'all 0.15s ease',
         gap: '16px',
       }}
     >
       {/* Play Button, Cover Artwork & Title Section */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
         <button
           onClick={track.blocked ? undefined : onPlay}
           disabled={track.blocked}
           title={track.blocked ? `Blocked: ${track.block_reason || 'Policy violation'}` : (isActiveTrack && isPlaying ? 'Pause' : 'Play')}
           style={{
-            width: '42px',
-            height: '42px',
+            width: '36px',
+            height: '36px',
             borderRadius: 'var(--radius-full)',
             backgroundColor: track.blocked
               ? 'rgba(244, 63, 94, 0.15)'
               : isActiveTrack && isPlaying
-              ? 'var(--accent-emerald)'
-              : 'var(--bg-card)',
+              ? 'var(--accent-primary)'
+              : isHovered
+              ? 'rgba(255, 255, 255, 0.15)'
+              : 'rgba(255, 255, 255, 0.08)',
             color: track.blocked
               ? 'var(--accent-rose)'
               : isActiveTrack && isPlaying
-              ? '#000'
+              ? '#ffffff'
               : 'var(--text-primary)',
-            border: track.blocked ? '1px solid rgba(244, 63, 94, 0.3)' : '1px solid var(--border-glass)',
+            border: 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
             transition: 'all 0.15s ease',
             cursor: track.blocked ? 'not-allowed' : 'pointer',
-            opacity: track.blocked ? 0.7 : 1,
           }}
         >
           {track.blocked ? (
-            <Ban size={18} />
+            <Ban size={16} />
           ) : isActiveTrack && isPlaying ? (
-            <Pause size={18} style={{ fill: 'currentColor' }} />
+            <Pause size={16} style={{ fill: 'currentColor' }} />
           ) : (
-            <Play size={18} style={{ fill: 'currentColor', marginLeft: '2px' }} />
+            <Play size={16} style={{ fill: 'currentColor', marginLeft: '2px' }} />
           )}
         </button>
 
-        {/* Procedural Vinyl Disc Artwork */}
+        {/* Cover Artwork */}
         <div
           style={{
-            width: '42px',
-            height: '42px',
-            borderRadius: 'var(--radius-md)',
+            width: '38px',
+            height: '38px',
+            borderRadius: 'var(--radius-sm)',
             overflow: 'hidden',
             border: '1px solid var(--border-glass)',
             flexShrink: 0,
@@ -123,97 +122,79 @@ export const TrackCard: React.FC<TrackCardProps> = ({
         </div>
 
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h3
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span
               style={{
-                fontSize: '0.95rem',
+                fontSize: '0.9rem',
                 fontWeight: 600,
-                color: track.blocked ? 'var(--text-muted)' : isActiveTrack ? 'var(--accent-emerald)' : 'var(--text-primary)',
+                color: track.blocked ? 'var(--text-muted)' : isActiveTrack ? 'var(--accent-primary)' : 'var(--text-primary)',
                 textDecoration: track.blocked ? 'line-through' : 'none',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
               }}
+              title={track.title}
             >
               {track.title}
-            </h3>
-            {track.blocked && (
-              <span title={track.block_reason || 'Content blocked by policy'}>
-                <Badge variant="rose">BLOCKED</Badge>
-              </span>
-            )}
+            </span>
             {track.signature && !track.blocked && (
-              <span title="Cryptographically signed with Ed25519" style={{ display: 'inline-flex', alignItems: 'center' }}>
-                <ShieldCheck
-                  size={14}
-                  style={{ color: 'var(--accent-emerald)', flexShrink: 0 }}
-                />
+              <span title="Verified Ed25519 author signature" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                <ShieldCheck size={13} style={{ color: 'var(--accent-primary)', flexShrink: 0 }} />
               </span>
             )}
           </div>
           <div
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontSize: '0.8rem',
+              fontSize: '0.78rem',
               color: 'var(--text-secondary)',
-              marginTop: '2px',
+              marginTop: '1px',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
             }}
           >
-            <span style={{ fontWeight: 500 }}>{track.artist}</span>
-            <span>•</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
-              {formatDuration(track.duration_ms)}
-            </span>
-            <span>•</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
-              {track.bitrate_kbps} kbps
-            </span>
+            {track.artist}
           </div>
         </div>
       </div>
 
-      {/* Availability & Technical Metadata */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-          <Badge
-            variant={
-              isFullAvailable
-                ? 'emerald'
-                : track.availability_pct > 0
-                ? 'amber'
-                : 'neutral'
-            }
-          >
-            {isFullAvailable
-              ? '100% Seeded'
-              : track.availability_pct > 0
-              ? `${track.availability_pct.toFixed(0)}% Cached`
-              : '0% Remote Swarm'}
-          </Badge>
-          <span
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.7rem',
-              color: 'var(--text-muted)',
-            }}
-          >
-            {track.block_count} chunks • {formatBytes(track.total_size_bytes)}
-          </span>
-        </div>
+      {/* Audio Quality & Duration Metadata */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.7rem',
+            padding: '2px 6px',
+            borderRadius: '4px',
+            backgroundColor: 'rgba(255, 255, 255, 0.05)',
+            border: '1px solid var(--border-glass)',
+            color: 'var(--text-secondary)',
+          }}
+        >
+          {track.bitrate_kbps >= 320 ? '320 kbps' : `${track.bitrate_kbps} kbps`}
+        </span>
 
-        <Badge variant="neutral">{track.license_code || 'CC-BY-4.0'}</Badge>
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.78rem',
+            color: 'var(--text-secondary)',
+            minWidth: '36px',
+            textAlign: 'right',
+          }}
+        >
+          {formatDuration(track.duration_ms)}
+        </span>
 
         {/* Action Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
           {onAddToPlaylist && (
             <button
               onClick={onAddToPlaylist}
               title="Add to Playlist"
               style={{
-                padding: '8px',
-                borderRadius: 'var(--radius-md)',
+                padding: '6px',
+                borderRadius: 'var(--radius-sm)',
                 color: 'var(--text-muted)',
                 backgroundColor: 'transparent',
                 border: 'none',
@@ -224,7 +205,7 @@ export const TrackCard: React.FC<TrackCardProps> = ({
                 transition: 'color 0.15s ease',
               }}
             >
-              <ListPlus size={16} />
+              <ListPlus size={15} />
             </button>
           )}
 
@@ -232,10 +213,10 @@ export const TrackCard: React.FC<TrackCardProps> = ({
             onClick={onTogglePin}
             title={track.pinned ? 'Pinned (retained in storage)' : 'Pin track'}
             style={{
-              padding: '8px',
-              borderRadius: 'var(--radius-md)',
-              color: track.pinned ? 'var(--accent-emerald)' : 'var(--text-muted)',
-              backgroundColor: track.pinned ? 'rgba(16, 185, 129, 0.1)' : 'transparent',
+              padding: '6px',
+              borderRadius: 'var(--radius-sm)',
+              color: track.pinned ? 'var(--accent-primary)' : 'var(--text-muted)',
+              backgroundColor: track.pinned ? 'rgba(249, 115, 22, 0.12)' : 'transparent',
               border: 'none',
               cursor: 'pointer',
               display: 'flex',
@@ -243,17 +224,17 @@ export const TrackCard: React.FC<TrackCardProps> = ({
               justifyContent: 'center',
             }}
           >
-            <Pin size={16} style={{ fill: track.pinned ? 'currentColor' : 'none' }} />
+            <Pin size={15} style={{ fill: track.pinned ? 'currentColor' : 'none' }} />
           </button>
 
           {!track.blocked && (
             <a
               href={apiClient.getDownloadUrl(track.content_id)}
               download
-              title={`Download ${track.artist ? `${track.artist} - ` : ''}${track.title}.mp3`}
+              title="Download audio"
               style={{
-                padding: '8px',
-                borderRadius: 'var(--radius-md)',
+                padding: '6px',
+                borderRadius: 'var(--radius-sm)',
                 color: 'var(--text-muted)',
                 backgroundColor: 'transparent',
                 border: 'none',
@@ -264,38 +245,18 @@ export const TrackCard: React.FC<TrackCardProps> = ({
                 textDecoration: 'none',
                 transition: 'color 0.15s ease',
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
             >
-              <Download size={16} />
+              <Download size={15} />
             </a>
           )}
-
-          <button
-            onClick={onDelete}
-            title="Delete from local node"
-            style={{
-              padding: '8px',
-              borderRadius: 'var(--radius-md)',
-              color: 'var(--text-muted)',
-              backgroundColor: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Trash2 size={16} />
-          </button>
 
           {onReport && (
             <button
               onClick={onReport}
-              title="Report track policy violation"
+              title="Report content"
               style={{
-                padding: '8px',
-                borderRadius: 'var(--radius-md)',
+                padding: '6px',
+                borderRadius: 'var(--radius-sm)',
                 color: 'var(--text-muted)',
                 backgroundColor: 'transparent',
                 border: 'none',
@@ -303,11 +264,31 @@ export const TrackCard: React.FC<TrackCardProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                transition: 'color 0.15s ease',
               }}
             >
-              <Flag size={16} />
+              <Flag size={15} />
             </button>
           )}
+
+          <button
+            onClick={onDelete}
+            title="Delete from local node"
+            style={{
+              padding: '6px',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-muted)',
+              backgroundColor: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'color 0.15s ease',
+            }}
+          >
+            <Trash2 size={15} />
+          </button>
         </div>
       </div>
     </div>

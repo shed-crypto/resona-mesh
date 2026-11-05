@@ -242,16 +242,14 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               justifyContent: 'space-between',
               alignItems: 'center',
               padding: '0 4px',
-              fontSize: '0.75rem',
+              fontSize: '0.78rem',
               color: 'var(--text-muted)',
-              fontFamily: 'var(--font-mono)',
             }}
           >
-            <span>SHOWING {tracks.length} OF {total} AUDIO ASSETS</span>
-            <span>SHARDED 256 KIB BLOCKS</span>
+            <span>Showing {tracks.length} of {total} tracks</span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {tracks.map((track) => (
               <TrackCard
                 key={track.content_id}
