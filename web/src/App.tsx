@@ -45,6 +45,8 @@ export function App() {
     toggleShuffle,
     toggleRepeat,
     clearQueue,
+    isRadio,
+    toggleRadio,
   } = useAudioPlayer();
 
   const {
@@ -195,6 +197,8 @@ export function App() {
         isRepeat={isRepeat}
         onPlayNext={playNext}
         onPlayPrevious={playPrevious}
+        isRadio={isRadio}
+        onToggleRadio={toggleRadio}
         onToggleShuffle={toggleShuffle}
         onToggleRepeat={toggleRepeat}
         onSelectQueueTrack={(t) => playTrack(t, queue)}
