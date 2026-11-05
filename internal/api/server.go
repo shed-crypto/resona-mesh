@@ -1025,11 +1025,28 @@ func (s *Server) handleGetStorage(w http.ResponseWriter, r *http.Request) {
 
 // handleGetSettings returns configurable node daemon parameters.
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	pubKey := s.publisherKey.Public().(ed25519.PublicKey)
+	pubKeyHex := crypto.PublicKeyToHex(pubKey)
+
+	var wanAddr string
+	if s.p2pHost != nil {
+		p2pPeerID := s.p2pHost.ID().String()
+		for _, ma := range s.p2pHost.Addrs() {
+			mStr := ma.String()
+			if !strings.Contains(mStr, "/127.0.0.1") && !strings.Contains(mStr, "/169.254.") && !strings.Contains(mStr, "::1") {
+				wanAddr = fmt.Sprintf("%s/p2p/%s", mStr, p2pPeerID)
+				break
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"storage_quota_bytes": s.cfg.StorageQuotaBytes,
 		"keeper_enabled":      s.cfg.KeeperEnabled,
 		"p2p_port":            s.cfg.P2PPort,
 		"http_addr":           s.cfg.HTTPAddr,
+		"publisher_key":       pubKeyHex,
+		"wan_address":         wanAddr,
 	})
 }
 
@@ -1049,8 +1066,8 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.StorageQuotaBytes != nil {
-		if *req.StorageQuotaBytes <= 0 {
-			writeJSONError(w, http.StatusBadRequest, "storage quota must be greater than zero")
+		if *req.StorageQuotaBytes < 0 {
+			writeJSONError(w, http.StatusBadRequest, "storage quota cannot be negative")
 			return
 		}
 		s.cfg.StorageQuotaBytes = *req.StorageQuotaBytes

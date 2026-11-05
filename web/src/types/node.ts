@@ -46,4 +46,6 @@ export interface NodeSettings {
   keeper_enabled: boolean;
   p2p_port: number;
   http_addr: string;
+  publisher_key?: string;
+  wan_address?: string;
 }
