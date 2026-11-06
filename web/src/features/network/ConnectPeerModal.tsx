@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { Radio, CheckCircle2, AlertCircle, Loader2, Copy, Check, Share2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Radio, CheckCircle2, AlertCircle, Loader2, Copy, Check, Share2, Activity, RefreshCw, ShieldAlert } from 'lucide-react';
 import { Modal } from '../../shared/components/Modal';
 import { Button } from '../../shared/components/Button';
 import { apiClient } from '../../shared/api/client';
 import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
+import type { PeerRecord } from '../../types/node';
 
 interface ConnectPeerModalProps {
   isOpen: boolean;
@@ -23,6 +24,39 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
   const [successPeerID, setSuccessPeerID] = useState<string | null>(null);
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
   const [showAllAddrs, setShowAllAddrs] = useState(false);
+  const [peers, setPeers] = useState<PeerRecord[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  const fetchPeers = async () => {
+    try {
+      const res = await apiClient.getPeers();
+      setPeers(res.peers || []);
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchPeers();
+    }
+  }, [isOpen]);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const res = await apiClient.syncPeers();
+      setSyncMsg(`Synced! (${res.imported_tracks} tracks)`);
+      fetchPeers();
+      setTimeout(() => setSyncMsg(null), 3000);
+    } catch (err: unknown) {
+      setSyncMsg(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const rawAddrs = (status?.listen_addrs || []).filter(Boolean);
   // Filter out dummy APIPA (169.254.x.x) and loopback unless nothing else exists
@@ -217,6 +251,170 @@ export const ConnectPeerModal: React.FC<ConnectPeerModalProps> = ({
           <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
             Надішліть цю адресу іншому користувачу для прямого з'єднання через LAN або WAN.
           </span>
+        </div>
+
+        {/* Active Swarm Peers & Reputation Section */}
+        <div
+          style={{
+            padding: '12px 14px',
+            backgroundColor: 'rgba(255, 255, 255, 0.02)',
+            border: '1px solid var(--border-glass)',
+            borderRadius: 'var(--radius-md)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Activity size={14} style={{ color: 'var(--accent-primary)' }} />
+              Connected Swarm Peers ({peers.length})
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {syncMsg && (
+                <span style={{ fontSize: '0.72rem', color: 'var(--accent-emerald)' }}>{syncMsg}</span>
+              )}
+              {peers.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleSync}
+                  disabled={syncing}
+                  title="Trigger catalog sync with connected peers"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--accent-primary)',
+                    fontSize: '0.72rem',
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                >
+                  <RefreshCw size={11} className={syncing ? 'spin' : ''} />
+                  {syncing ? 'Syncing...' : 'Sync Catalog'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {peers.length === 0 ? (
+            <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              No peers connected yet. Dial an address below or discover local peers via LAN mDNS.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+              {peers.map((p) => {
+                const isQuarantined = p.is_quarantined;
+                const score = p.reputation_score ?? 100;
+                const latency = p.avg_latency_ms;
+                const blocks = p.blocks_verified ?? 0;
+                const mismatches = p.hash_mismatches ?? 0;
+
+                return (
+                  <div
+                    key={p.peer_id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '6px 10px',
+                      backgroundColor: 'var(--bg-card)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: isQuarantined
+                        ? '1px solid rgba(244, 63, 94, 0.3)'
+                        : '1px solid rgba(255, 255, 255, 0.05)',
+                      fontSize: '0.75rem',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                      <span
+                        style={{
+                          width: '7px',
+                          height: '7px',
+                          borderRadius: '50%',
+                          backgroundColor: isQuarantined
+                            ? 'var(--accent-rose)'
+                            : p.connected
+                            ? 'var(--accent-emerald)'
+                            : 'var(--text-muted)',
+                          flexShrink: 0,
+                        }}
+                      />
+                      <code
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: '0.72rem',
+                          color: 'var(--text-primary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          maxWidth: '120px',
+                        }}
+                        title={p.peer_id}
+                      >
+                        {p.peer_id.slice(0, 8)}...{p.peer_id.slice(-6)}
+                      </code>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                      {isQuarantined ? (
+                        <span
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '3px',
+                            color: 'var(--accent-rose)',
+                            fontSize: '0.68rem',
+                            fontWeight: 600,
+                            backgroundColor: 'rgba(244, 63, 94, 0.12)',
+                            padding: '2px 6px',
+                            borderRadius: 'var(--radius-sm)',
+                          }}
+                          title={p.quarantined_until ? `Quarantined until ${p.quarantined_until}` : 'Quarantined'}
+                        >
+                          <ShieldAlert size={10} /> Quarantined
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            color: score >= 100 ? 'var(--accent-emerald)' : 'var(--accent-amber)',
+                            fontSize: '0.68rem',
+                            fontWeight: 600,
+                            backgroundColor: score >= 100 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+                            padding: '2px 6px',
+                            borderRadius: 'var(--radius-sm)',
+                          }}
+                          title="Swarm reputation score"
+                        >
+                          {score.toFixed(0)} pts
+                        </span>
+                      )}
+
+                      {latency && latency > 0 ? (
+                        <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                          ~{latency.toFixed(0)}ms
+                        </span>
+                      ) : null}
+
+                      {blocks > 0 && (
+                        <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                          {blocks} blk
+                        </span>
+                      )}
+
+                      {mismatches > 0 && (
+                        <span style={{ fontSize: '0.68rem', color: 'var(--accent-rose)', fontWeight: 600 }}>
+                          {mismatches} err
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         {error && (
           <div
