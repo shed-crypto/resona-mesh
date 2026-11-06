@@ -21,6 +21,13 @@ export function useAudioPlayer() {
   const [queueIndex, setQueueIndex] = useState<number>(-1);
   const [isShuffle, setIsShuffle] = useState(false);
   const [isRepeat, setIsRepeat] = useState(false);
+  const [isRadio, setIsRadio] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('resonamesh_radio_active') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [playbackRate, setPlaybackRateState] = useState<number>(1.0);
   const playbackRateRef = useRef<number>(1.0);
 
@@ -38,6 +45,9 @@ export function useAudioPlayer() {
 
   const isRepeatRef = useRef<boolean>(isRepeat);
   isRepeatRef.current = isRepeat;
+
+  const isRadioRef = useRef<boolean>(isRadio);
+  isRadioRef.current = isRadio;
 
   const currentTrackRef = useRef<Track | null>(currentTrack);
   currentTrackRef.current = currentTrack;
@@ -100,6 +110,25 @@ export function useAudioPlayer() {
           playTrackInternal(q[nextIdx], q, nextIdx);
           return;
         }
+      }
+
+      if (isRadioRef.current && currentTrackRef.current) {
+        apiClient.getRecommendations(currentTrackRef.current.content_id, 10).then(({ recommendations }) => {
+          if (recommendations && recommendations.length > 0) {
+            const existingIds = new Set(q.map((t) => t.content_id));
+            const nextRec = recommendations.find((r) => !existingIds.has(r.track.content_id));
+            const candidate = nextRec ? nextRec.track : recommendations[0].track;
+            const updatedQueue = [...q, candidate];
+            playTrackInternal(candidate, updatedQueue, updatedQueue.length - 1);
+            return;
+          }
+          setPlayerState('paused');
+          setCurrentTime(0);
+        }).catch(() => {
+          setPlayerState('paused');
+          setCurrentTime(0);
+        });
+        return;
       }
 
       setPlayerState('paused');
@@ -311,6 +340,16 @@ export function useAudioPlayer() {
     queueIndex,
     isShuffle,
     isRepeat,
+    isRadio,
+    toggleRadio: () => {
+      setIsRadio((prev) => {
+        const next = !prev;
+        try {
+          localStorage.setItem('resonamesh_radio_active', String(next));
+        } catch {}
+        return next;
+      });
+    },
     playNext,
     playPrevious,
     toggleShuffle,

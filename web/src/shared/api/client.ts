@@ -1,4 +1,4 @@
-import type { Track, Manifest, TrackListResponse, Report, Decision, BlockedItem } from '../../types/track';
+import type { Track, Manifest, TrackRecommendation, TrackListResponse, Report, Decision, BlockedItem } from '../../types/track';
 import type { NodeStatus, PeerRecord, StorageUsage, NodeSettings } from '../../types/node';
 
 export interface ModeratorCertificate {
@@ -98,6 +98,27 @@ export const apiClient = {
     });
     if (!res.ok) {
       throw new Error(`Failed to delete track: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async getRecommendations(id: string, limit: number = 10): Promise<{ content_id: string; recommendations: TrackRecommendation[] }> {
+    const res = await fetch(`${API_BASE}/tracks/${id}/recommendations?limit=${limit}`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch recommendations: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async updateTrackMetadata(id: string, metadata: { genre?: string; tags?: string[]; bpm?: number; mood?: string }): Promise<{ status: string; track: Track }> {
+    const res = await fetch(`${API_BASE}/tracks/${id}/metadata`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(metadata),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to update metadata: ${res.statusText}`);
     }
     return res.json();
   },

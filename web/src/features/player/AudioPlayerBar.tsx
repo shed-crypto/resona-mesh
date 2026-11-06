@@ -8,6 +8,7 @@ import {
   SkipForward,
   Shuffle,
   Repeat,
+  Radio,
   ListMusic,
   Trash2,
   Download,
@@ -53,6 +54,8 @@ interface AudioPlayerBarProps {
   onPlayNext?: () => void;
   onPlayPrevious?: () => void;
   onToggleShuffle?: () => void;
+  isRadio?: boolean;
+  onToggleRadio?: () => void;
   onToggleRepeat?: () => void;
   onSelectQueueTrack?: (track: Track) => void;
   onClearQueue?: () => void;
@@ -79,6 +82,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   isRepeat = false,
   onPlayNext,
   onPlayPrevious,
+  isRadio,
+  onToggleRadio,
   onToggleShuffle,
   onToggleRepeat,
   onSelectQueueTrack,
@@ -665,6 +670,31 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             flex: '0 0 auto',
           }}
         >
+                    {/* Swarm Radio Autonomous Auto-Queue */}
+          {onToggleRadio && (
+            <button
+              onClick={onToggleRadio}
+              style={{
+                background: isRadio ? 'rgba(249, 115, 22, 0.18)' : 'none',
+                border: isRadio ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
+                borderRadius: 'var(--radius-sm)',
+                color: isRadio ? 'var(--accent-primary)' : 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '6px 8px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '0.75rem',
+                transition: 'all 0.15s ease',
+                height: '32px',
+              }}
+              title={isRadio ? 'Swarm Radio: Active (Auto-queues similar tracks)' : 'Enable Swarm Radio (Autonomous auto-queue)'}
+            >
+              <Radio size={15} />
+              <span className="player-btn-label">Radio</span>
+            </button>
+          )}
+
           {/* Synchronized Lyrics Toggle */}
           <button
             onClick={toggleLyrics}
