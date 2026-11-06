@@ -86,6 +86,30 @@ The system prioritizes peers with public IPs or open NATs as relay candidates. C
 
 ---
 
+## Recommendation Engine & Swarm Radio
+
+ResonaMesh features a fully autonomous, privacy-preserving music recommendation and auto-queue engine (`internal/catalog/recommendations.go`). All similarity computations occur strictly on the local node without transmitting listening telemetry or graph queries over the network.
+
+Given a seed track $A$ and a catalog candidate track $B$, the engine computes a normalized composite similarity score $\text{Score}(A, B) \in [0, 1]$:
+
+$$\text{Score}(A, B) = 0.75 \cdot J(T_A, T_B) + 0.25 \cdot S_{\text{bpm}}$$
+
+### 1. Tag & Genre Jaccard Similarity ($J(T_A, T_B)$)
+Each track is indexed by a normalized lowercase set of semantic descriptors: $T_X = \{\text{genre}_X, \text{mood}_X, \text{artist}_X\} \cup \text{tags}_X$. Set similarity is evaluated via the Jaccard coefficient:
+
+$$J(T_A, T_B) = \frac{|T_A \cap T_B|}{|T_A \cup T_B|}$$
+
+### 2. Harmonic Tempo Proximity ($S_{\text{bpm}}$)
+When tempo metadata ($\text{BPM} > 0$) is available on both tracks, tempo proximity is calculated while accounting for musical double-time and half-time harmonic transitions:
+
+$$\Delta_{\text{effective}} = \min\left( |\text{BPM}_A - \text{BPM}_B|, \; |\text{BPM}_A - 2 \cdot \text{BPM}_B|, \; |\text{BPM}_A - 0.5 \cdot \text{BPM}_B| \right)$$
+
+$$S_{\text{bpm}} = \max\left(0, \; 1 - \frac{\Delta_{\text{effective}}}{60}\right)$$
+
+When the queue is depleted and "Swarm Radio" is active, the audio player automatically queries `GET /api/v1/tracks/{id}/recommendations`, queues the highest-ranking unplayed track, and continues continuous playback from the local library or mesh peers.
+
+---
+
 ## Technology Stack
 
 | Layer | Technology | Rationale |
