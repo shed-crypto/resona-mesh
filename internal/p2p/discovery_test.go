@@ -130,3 +130,26 @@ func TestDiscoveryHandlePeerFoundAutoConnect(t *testing.T) {
 		t.Fatalf("expected host A connected to host B")
 	}
 }
+
+
+func TestPeerTrackerBoundedMemoryAndDiscoveredVia(t *testing.T) {
+	tracker := NewPeerTracker()
+	relayPeer := generateTestPeerID(t)
+
+	// Record 80 disconnected 2-hop referrals via relayPeer
+	for i := 0; i < 80; i++ {
+		pid := generateTestPeerID(t)
+		tracker.RecordPeerVia(peer.AddrInfo{ID: pid}, false, relayPeer)
+	}
+
+	// Memory cap must strictly hold at MaxTrackedPeers (64)
+	if tracker.Count() != MaxTrackedPeers {
+		t.Fatalf("expected bounded count %d, got %d", MaxTrackedPeers, tracker.Count())
+	}
+
+	for _, rec := range tracker.Peers() {
+		if rec.DiscoveredVia != relayPeer.String() {
+			t.Fatalf("expected DiscoveredVia %s, got %s", relayPeer.String(), rec.DiscoveredVia)
+		}
+	}
+}
