@@ -18,6 +18,7 @@ import {
   Gauge,
   Timer,
   Maximize2,
+  MoreHorizontal,
 } from 'lucide-react';
 import type { Track } from '../../types/track';
 import type { PlayerState } from '../../shared/hooks/useAudioPlayer';
@@ -25,7 +26,7 @@ import { LyricsDrawer } from './LyricsDrawer';
 import { EqualizerDrawer } from './EqualizerDrawer';
 import { FullscreenPlayerModal } from './FullscreenPlayerModal';
 import { useAudioEqualizer } from './useAudioEqualizer';
-import { useSleepTimer, type SleepTimerOption } from './useSleepTimer';
+import { useSleepTimer } from './useSleepTimer';
 import { WaveformScrubber } from './WaveformScrubber';
 import { VolumeControl } from './VolumeControl';
 import { Badge } from '../../shared/components/Badge';
@@ -94,9 +95,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isEqOpen, setIsEqOpen] = useState(false);
-  const [isRateMenuOpen, setIsRateMenuOpen] = useState(false);
-  const [isSleepMenuOpen, setIsSleepMenuOpen] = useState(false);
   const [isFullscreenOpen, setIsFullscreenOpen] = useState(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const { status: nodeStatus } = useNodeStatus();
   const connectedPeers = nodeStatus?.connected_peers ?? 0;
 
@@ -104,8 +104,6 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     setIsLyricsOpen(false);
     setIsEqOpen(false);
     setIsQueueOpen(false);
-    setIsRateMenuOpen(false);
-    setIsSleepMenuOpen(false);
   };
 
   const toggleLyrics = () => {
@@ -126,17 +124,6 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     setIsQueueOpen(next);
   };
 
-  const toggleRateMenu = () => {
-    const next = !isRateMenuOpen;
-    closeAllPopups();
-    setIsRateMenuOpen(next);
-  };
-
-  const toggleSleepMenu = () => {
-    const next = !isSleepMenuOpen;
-    closeAllPopups();
-    setIsSleepMenuOpen(next);
-  };
 
   const eq = useAudioEqualizer(audioElement ?? null);
   const sleepTimer = useSleepTimer(
@@ -585,21 +572,25 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           </div>
         </div>
 
-        {/* Center: Play Controls & Dual-Buffer Scrubber */}
+        {/* Center: Play Controls & Dual-Buffer Scrubber (Strict Absolute Viewport Centering) */}
         <div
           style={{
+            position: 'absolute',
+            left: '50%',
+            transform: 'translateX(-50%)',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
             gap: '4px',
-            flex: '1 1 auto',
-            minWidth: '240px',
-            maxWidth: '560px',
-            margin: '0 auto',
+            width: '100%',
+            maxWidth: '520px',
             padding: '0 12px',
+            pointerEvents: 'none',
+            zIndex: 105,
           }}
         >
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             {/* Shuffle Button */}
             {onToggleShuffle && (
@@ -715,6 +706,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             bufferedPct={bufferedPct}
             onSeek={onSeek}
           />
+          </div>
         </div>
 
         {/* Right: Studio Audio Suite, Queue & Volume */}
@@ -723,36 +715,12 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'flex-end',
-            gap: '6px',
+            gap: '8px',
             flexShrink: 0,
             flex: '0 0 auto',
+            zIndex: 110,
           }}
         >
-                    {/* Swarm Radio Autonomous Auto-Queue */}
-          {onToggleRadio && (
-            <button
-              onClick={onToggleRadio}
-              style={{
-                background: isRadio ? 'rgba(249, 115, 22, 0.18)' : 'none',
-                border: isRadio ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
-                borderRadius: 'var(--radius-sm)',
-                color: isRadio ? 'var(--accent-primary)' : 'var(--text-muted)',
-                cursor: 'pointer',
-                padding: '6px 8px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                fontSize: '0.75rem',
-                transition: 'all 0.15s ease',
-                height: '32px',
-              }}
-              title={isRadio ? 'Swarm Radio: Active (Auto-queues similar tracks)' : 'Enable Swarm Radio (Autonomous auto-queue)'}
-            >
-              <Radio size={15} />
-              <span className="player-btn-label">Radio</span>
-            </button>
-          )}
-
           {/* Synchronized Lyrics Toggle */}
           <button
             onClick={toggleLyrics}
@@ -762,10 +730,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               borderRadius: 'var(--radius-sm)',
               color: isLyricsOpen ? 'var(--accent-primary)' : 'var(--text-muted)',
               cursor: 'pointer',
-              padding: '6px 8px',
+              padding: '6px 9px',
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '4px',
+              gap: '5px',
               fontSize: '0.75rem',
               transition: 'all 0.15s ease',
               height: '32px',
@@ -785,10 +753,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               borderRadius: 'var(--radius-sm)',
               color: isEqOpen ? 'var(--accent-primary)' : eq.isEnabled && eq.preset !== 'flat' ? 'var(--accent-primary)' : 'var(--text-muted)',
               cursor: 'pointer',
-              padding: '6px 8px',
+              padding: '6px 9px',
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '4px',
+              gap: '5px',
               fontSize: '0.75rem',
               transition: 'all 0.15s ease',
               height: '32px',
@@ -799,156 +767,6 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             <span className="player-btn-label">EQ</span>
           </button>
 
-          {/* Playback Speed Popover */}
-          <div style={{ position: 'relative' }}>
-            <button
-              onClick={toggleRateMenu}
-              style={{
-                background: playbackRate !== 1.0 ? 'rgba(249, 115, 22, 0.18)' : 'none',
-                border: playbackRate !== 1.0 ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
-                borderRadius: 'var(--radius-sm)',
-                color: playbackRate !== 1.0 ? 'var(--accent-primary)' : 'var(--text-muted)',
-                cursor: 'pointer',
-                padding: '6px 8px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                fontSize: '0.75rem',
-                transition: 'all 0.15s ease',
-                height: '32px',
-              }}
-              title="Adjust Playback Speed"
-            >
-              <Gauge size={14} />
-              <span>{playbackRate}x</span>
-            </button>
-
-            {isRateMenuOpen && (
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: '42px',
-                  right: 0,
-                  backgroundColor: 'rgba(26, 26, 29, 0.98)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid var(--border-active)',
-                  borderRadius: 'var(--radius-md)',
-                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
-                  padding: '6px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '2px',
-                  zIndex: 120,
-                  minWidth: '80px',
-                }}
-              >
-                {[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map((rate) => (
-                  <button
-                    key={rate}
-                    onClick={() => {
-                      onPlaybackRateChange?.(rate);
-                      setIsRateMenuOpen(false);
-                    }}
-                    style={{
-                      background: playbackRate === rate ? 'rgba(249, 115, 22, 0.15)' : 'none',
-                      border: 'none',
-                      borderRadius: 'var(--radius-sm)',
-                      color: playbackRate === rate ? 'var(--accent-primary)' : 'var(--text-primary)',
-                      cursor: 'pointer',
-                      padding: '6px 12px',
-                      fontSize: '0.75rem',
-                      textAlign: 'left',
-                      fontWeight: playbackRate === rate ? 600 : 400,
-                      transition: 'all 0.1s ease',
-                    }}
-                  >
-                    {rate}x
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Sleep Timer Popover */}
-          <div style={{ position: 'relative' }}>
-            <button
-              onClick={toggleSleepMenu}
-              style={{
-                background: sleepTimer.timerOption !== 0 ? 'rgba(249, 115, 22, 0.18)' : 'none',
-                border: sleepTimer.timerOption !== 0 ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
-                borderRadius: 'var(--radius-sm)',
-                color: sleepTimer.timerOption !== 0 ? 'var(--accent-primary)' : 'var(--text-muted)',
-                cursor: 'pointer',
-                padding: '6px 8px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                fontSize: '0.75rem',
-                transition: 'all 0.15s ease',
-                height: '32px',
-              }}
-              title={sleepTimer.timerOption !== 0 ? `Sleep timer: ${sleepTimer.formattedRemaining} remaining` : 'Set Sleep Timer'}
-            >
-              <Timer size={14} />
-              <span className={sleepTimer.timerOption !== 0 ? '' : 'player-btn-label'}>
-                {sleepTimer.formattedRemaining || 'Timer'}
-              </span>
-            </button>
-
-            {isSleepMenuOpen && (
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: '42px',
-                  right: 0,
-                  backgroundColor: 'rgba(26, 26, 29, 0.98)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid var(--border-active)',
-                  borderRadius: 'var(--radius-md)',
-                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
-                  padding: '6px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '2px',
-                  zIndex: 120,
-                  minWidth: '120px',
-                }}
-              >
-                {[
-                  { label: 'Off', val: 0 as SleepTimerOption },
-                  { label: '15 min', val: 15 as SleepTimerOption },
-                  { label: '30 min', val: 30 as SleepTimerOption },
-                  { label: '45 min', val: 45 as SleepTimerOption },
-                  { label: '60 min', val: 60 as SleepTimerOption },
-                  { label: 'End of Track', val: -1 as SleepTimerOption },
-                ].map((opt) => (
-                  <button
-                    key={opt.label}
-                    onClick={() => {
-                      sleepTimer.startTimer(opt.val);
-                      setIsSleepMenuOpen(false);
-                    }}
-                    style={{
-                      background: sleepTimer.timerOption === opt.val ? 'rgba(249, 115, 22, 0.15)' : 'none',
-                      border: 'none',
-                      borderRadius: 'var(--radius-sm)',
-                      color: sleepTimer.timerOption === opt.val ? 'var(--accent-primary)' : 'var(--text-primary)',
-                      cursor: 'pointer',
-                      padding: '6px 12px',
-                      fontSize: '0.75rem',
-                      textAlign: 'left',
-                      fontWeight: sleepTimer.timerOption === opt.val ? 600 : 400,
-                      transition: 'all 0.1s ease',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
           {/* Queue Drawer Toggle */}
           <button
             onClick={toggleQueue}
@@ -958,10 +776,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               borderRadius: 'var(--radius-sm)',
               color: isQueueOpen ? 'var(--accent-primary)' : 'var(--text-muted)',
               cursor: 'pointer',
-              padding: '6px 8px',
+              padding: '6px 9px',
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '4px',
+              gap: '5px',
               fontSize: '0.75rem',
               transition: 'all 0.15s ease',
               height: '32px',
@@ -969,80 +787,220 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             title="Toggle Swarm Playback Queue"
           >
             <ListMusic size={15} />
-            {queue.length > 0 && <span>{queue.length}</span>}
+            {queue.length > 0 && <span style={{ fontWeight: 600 }}>{queue.length}</span>}
           </button>
 
-          {/* Download Audio Track */}
-          <a
-            href={apiClient.getDownloadUrl(currentTrack.content_id)}
-            download
-            style={{
-              background: 'none',
-              border: '1px solid var(--border-glass)',
-              borderRadius: 'var(--radius-sm)',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: '6px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textDecoration: 'none',
-              transition: 'all 0.15s ease',
-              height: '32px',
-              width: '32px',
-              boxSizing: 'border-box',
-            }}
-            title={`Download ${currentTrack.artist ? `${currentTrack.artist} - ` : ''}${currentTrack.title}.mp3`}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = 'var(--text-primary)';
-              e.currentTarget.style.borderColor = 'var(--border-active)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = 'var(--text-muted)';
-              e.currentTarget.style.borderColor = 'var(--border-glass)';
-            }}
-          >
-            <Download size={15} />
-          </a>
+          {/* More Audio Tools Popover (Radio, Speed, Timer, Download) */}
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => {
+                const nextState = !isMoreMenuOpen;
+                closeAllPopups();
+                setIsMoreMenuOpen(nextState);
+              }}
+              style={{
+                background: (isRadio || playbackRate !== 1.0 || sleepTimer.timerOption !== 0)
+                  ? 'rgba(249, 115, 22, 0.18)'
+                  : isMoreMenuOpen
+                  ? 'rgba(255, 255, 255, 0.1)'
+                  : 'none',
+                border: (isRadio || playbackRate !== 1.0 || sleepTimer.timerOption !== 0)
+                  ? '1px solid var(--accent-primary)'
+                  : '1px solid var(--border-glass)',
+                borderRadius: 'var(--radius-sm)',
+                color: (isRadio || playbackRate !== 1.0 || sleepTimer.timerOption !== 0)
+                  ? 'var(--accent-primary)'
+                  : 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '6px 8px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.15s ease',
+                height: '32px',
+              }}
+              title="More Audio Options (Radio, Speed, Timer, Download)"
+            >
+              <MoreHorizontal size={16} />
+            </button>
 
-          {/* Fullscreen Studio Toggle */}
-          <button
-            onClick={() => setIsFullscreenOpen(true)}
-            style={{
-              background: 'none',
-              border: '1px solid var(--border-glass)',
-              borderRadius: 'var(--radius-sm)',
-              color: 'var(--text-muted)',
-              cursor: 'pointer',
-              padding: '6px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'all 0.15s ease',
-              height: '32px',
-              width: '32px',
-              boxSizing: 'border-box',
-            }}
-            title="Open Studio Mode (F)"
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = 'var(--accent-primary)';
-              e.currentTarget.style.borderColor = 'var(--accent-primary)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = 'var(--text-muted)';
-              e.currentTarget.style.borderColor = 'var(--border-glass)';
-            }}
-          >
-            <Maximize2 size={15} />
-          </button>
+            {isMoreMenuOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '44px',
+                  right: 0,
+                  backgroundColor: 'rgba(20, 23, 29, 0.98)',
+                  backdropFilter: 'blur(20px)',
+                  border: '1px solid var(--border-active)',
+                  borderRadius: 'var(--radius-md)',
+                  boxShadow: '0 12px 32px rgba(0, 0, 0, 0.8)',
+                  padding: '12px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                  zIndex: 130,
+                  minWidth: '220px',
+                }}
+              >
+                {/* Radio Mode Toggle */}
+                {onToggleRadio && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '8px', borderBottom: '1px solid var(--border-glass)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-primary)' }}>
+                      <Radio size={14} style={{ color: isRadio ? 'var(--accent-primary)' : 'var(--text-muted)' }} />
+                      <span>Swarm Radio</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onToggleRadio()}
+                      style={{
+                        padding: '2px 8px',
+                        fontSize: '0.72rem',
+                        borderRadius: 'var(--radius-sm)',
+                        border: isRadio ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
+                        backgroundColor: isRadio ? 'rgba(249, 115, 22, 0.2)' : 'transparent',
+                        color: isRadio ? 'var(--accent-primary)' : 'var(--text-muted)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {isRadio ? 'Active' : 'Off'}
+                    </button>
+                  </div>
+                )}
 
+                {/* Playback Speed */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingBottom: '8px', borderBottom: '1px solid var(--border-glass)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-primary)' }}>
+                    <Gauge size={14} style={{ color: playbackRate !== 1.0 ? 'var(--accent-primary)' : 'var(--text-muted)' }} />
+                    <span>Speed: <strong style={{ color: 'var(--accent-primary)' }}>{playbackRate}x</strong></span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '3px' }}>
+                    {[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map((rate) => (
+                      <button
+                        key={rate}
+                        type="button"
+                        onClick={() => onPlaybackRateChange?.(rate)}
+                        style={{
+                          padding: '3px 0',
+                          fontSize: '0.68rem',
+                          borderRadius: 'var(--radius-xs)',
+                          border: playbackRate === rate ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
+                          backgroundColor: playbackRate === rate ? 'rgba(249, 115, 22, 0.2)' : 'transparent',
+                          color: playbackRate === rate ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                          cursor: 'pointer',
+                          textAlign: 'center',
+                        }}
+                      >
+                        {rate}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Sleep Timer */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingBottom: '8px', borderBottom: '1px solid var(--border-glass)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-primary)' }}>
+                    <Timer size={14} style={{ color: sleepTimer.timerOption !== 0 ? 'var(--accent-primary)' : 'var(--text-muted)' }} />
+                    <span>Sleep Timer: <strong style={{ color: 'var(--accent-primary)' }}>{sleepTimer.formattedRemaining || 'Off'}</strong></span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+                    {[
+                      { label: 'Off', val: 0 },
+                      { label: '15m', val: 15 },
+                      { label: '30m', val: 30 },
+                      { label: '45m', val: 45 },
+                      { label: '60m', val: 60 },
+                      { label: 'End', val: -1 },
+                    ].map((opt) => (
+                      <button
+                        key={opt.val}
+                        type="button"
+                        onClick={() => sleepTimer.startTimer(opt.val as any)}
+                        style={{
+                          padding: '3px 0',
+                          fontSize: '0.68rem',
+                          borderRadius: 'var(--radius-xs)',
+                          border: sleepTimer.timerOption === opt.val ? '1px solid var(--accent-primary)' : '1px solid var(--border-glass)',
+                          backgroundColor: sleepTimer.timerOption === opt.val ? 'rgba(249, 115, 22, 0.2)' : 'transparent',
+                          color: sleepTimer.timerOption === opt.val ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                          cursor: 'pointer',
+                          textAlign: 'center',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Direct Audio Download */}
+                <a
+                  href={apiClient.getDownloadUrl(currentTrack.content_id)}
+                  download
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '0.76rem',
+                    color: 'var(--text-secondary)',
+                    textDecoration: 'none',
+                    padding: '4px 6px',
+                    borderRadius: 'var(--radius-sm)',
+                    transition: 'all 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                    e.currentTarget.style.color = 'var(--text-primary)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.color = 'var(--text-secondary)';
+                  }}
+                >
+                  <Download size={14} style={{ color: 'var(--accent-sky)' }} />
+                  <span>Download Audio (.mp3)</span>
+                </a>
+              </div>
+            )}
+          </div>
+
+          {/* Output Audio Volume Control */}
           <VolumeControl
             volume={volume}
             isMuted={isMuted}
             onVolumeChange={onVolumeChange}
             onToggleMute={onToggleMute}
           />
+
+          {/* Fullscreen Studio Modal Launch Button */}
+          <button
+            onClick={() => setIsFullscreenOpen(true)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 'var(--radius-sm)',
+              transition: 'color 0.15s ease, background-color 0.15s ease',
+            }}
+            title="Open Fullscreen Studio (Now Playing)"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = 'var(--text-primary)';
+              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.06)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'var(--text-muted)';
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
+            <Maximize2 size={16} />
+          </button>
         </div>
       </div>
+
     </>
   );};
