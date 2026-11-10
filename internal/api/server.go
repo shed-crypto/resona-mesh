@@ -735,9 +735,10 @@ func SanitizeFilename(name string) string {
 	return cleaned
 }
 
-// EnrichedPeerRecord wraps runtime peer discovery state with empirical reputation metrics.
+// EnrichedPeerRecord wraps runtime peer discovery state with empirical reputation metrics and transport classification.
 type EnrichedPeerRecord struct {
 	p2p.PeerRecord
+	ConnectionType   string  `json:"connection_type"`
 	Score            float64 `json:"reputation_score"`
 	BlocksVerified   int64   `json:"blocks_verified"`
 	HashMismatches   int64   `json:"hash_mismatches"`
@@ -751,8 +752,9 @@ type EnrichedPeerRecord struct {
 func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
 	if s.peerTracker == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"peers": []EnrichedPeerRecord{},
-			"total": 0,
+			"peers":       []EnrichedPeerRecord{},
+			"total":       0,
+			"cache_limit": p2p.MaxTrackedPeers,
 		})
 		return
 	}
@@ -761,9 +763,29 @@ func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	enriched := make([]EnrichedPeerRecord, 0, len(rawPeers))
 	for _, p := range rawPeers {
+		connType := "known"
+		if p.Connected {
+			if s.p2pHost != nil {
+				if s.p2pHost.HasDirectConnection(p.ID) {
+					connType = "direct"
+				} else {
+					connType = "relayed"
+				}
+			} else {
+				connType = "direct"
+				for _, addr := range p.Addrs {
+					if strings.Contains(addr, "p2p-circuit") {
+						connType = "relayed"
+						break
+					}
+				}
+			}
+		}
+
 		ep := EnrichedPeerRecord{
-			PeerRecord: p,
-			Score:      100.0,
+			PeerRecord:     p,
+			ConnectionType: connType,
+			Score:          100.0,
 		}
 		if s.reputationTracker != nil {
 			ep.Score = s.reputationTracker.Score(p.ID)
@@ -782,8 +804,9 @@ func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"peers": enriched,
-		"total": len(enriched),
+		"peers":       enriched,
+		"total":       len(enriched),
+		"cache_limit": p2p.MaxTrackedPeers,
 	})
 }
 

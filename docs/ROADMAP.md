@@ -21,7 +21,8 @@ Before modifying any subsystem, consult this matrix to verify what is already im
 | **Priority 1: Milestone 12 — Synchronized Lyrics (`.lrc`)** | Implemented | `pkg/protocol/types.go`, `internal/storage/sqlite.go`, `internal/catalog/catalog.go`, `internal/api/server.go`, `web/src/shared/utils/lrcParser.ts`, `web/src/features/player/LyricsDrawer.tsx` |
 | **Priority 2: Milestone 14 — Studio Audio Suite (EQ & Fullscreen)** | Implemented | `web/src/features/player/useAudioEqualizer.ts`, `web/src/features/player/EqualizerDrawer.tsx`, `web/src/features/player/useSleepTimer.ts`, `web/src/features/player/FullscreenPlayerModal.tsx` |
 | **Priority 3: Milestone 15 — Metadata Tags & Local Swarm Radio** | Implemented | `internal/catalog/recommendations.go`, `internal/api/server.go`, `web/src/shared/hooks/useAudioPlayer.ts`, `web/src/features/player/AudioPlayerBar.tsx` |
-| **Priority 4: Milestone 13 — Local Swarm Reputation & Quarantine** | **Next Up (P4)** | `internal/p2p/reputation.go`, `internal/p2p/fetcher.go` |
+| **Priority 4: Milestone 13 — Local Swarm Reputation & Quarantine** | Implemented | `internal/p2p/reputation.go`, `internal/p2p/fetcher.go`, `internal/api/server.go` |
+| **Priority 5: Mesh Topology Map & Bounded 2-Hop PEX Horizon** | Implemented | `internal/p2p/discovery.go`, `internal/p2p/pex.go`, `web/src/features/network/MeshTopologyMap.tsx`, `web/src/features/network/ConnectPeerModal.tsx` |
 
 ---
 

@@ -17,18 +17,25 @@ const (
 
 	// ConnectTimeout is the maximum duration allocated to establish connection to a discovered peer.
 	ConnectTimeout = 5 * time.Second
+
+	// MaxTrackedPeers bounds the maximum number of peer records held in memory to prevent unbounded growth.
+	MaxTrackedPeers = 64
+
+	// KnownPeerStaleTTL is the retention period for disconnected 2-hop/discovered peer records before eviction.
+	KnownPeerStaleTTL = 30 * time.Minute
 )
 
 // PeerRecord holds runtime discovery and connectivity state for a swarm peer.
 type PeerRecord struct {
-	ID        peer.ID       `json:"peer_id"`
-	Addrs     []string      `json:"addrs"`
-	FirstSeen time.Time     `json:"first_seen"`
-	LastSeen  time.Time     `json:"last_seen"`
-	Connected bool          `json:"connected"`
+	ID            peer.ID   `json:"peer_id"`
+	Addrs         []string  `json:"addrs"`
+	FirstSeen     time.Time `json:"first_seen"`
+	LastSeen      time.Time `json:"last_seen"`
+	Connected     bool      `json:"connected"`
+	DiscoveredVia string    `json:"discovered_via,omitempty"`
 }
 
-// PeerTracker tracks known and connected swarm peers in a thread-safe registry.
+// PeerTracker tracks known and connected swarm peers in a thread-safe bounded registry.
 type PeerTracker struct {
 	mu    sync.RWMutex
 	peers map[peer.ID]*PeerRecord
@@ -41,8 +48,14 @@ func NewPeerTracker() *PeerTracker {
 	}
 }
 
-// RecordPeer updates or inserts peer record on discovery.
+// RecordPeer updates or inserts peer record on direct discovery.
 func (pt *PeerTracker) RecordPeer(pi peer.AddrInfo, connected bool) {
+	pt.RecordPeerVia(pi, connected, "")
+}
+
+// RecordPeerVia updates or inserts a peer record, optionally recording the 1-hop neighbor that referred it,
+// while enforcing strict memory bounds via TTL pruning and LRU eviction of disconnected peers.
+func (pt *PeerTracker) RecordPeerVia(pi peer.AddrInfo, connected bool, via peer.ID) {
 	pt.mu.Lock()
 	defer pt.mu.Unlock()
 
@@ -54,20 +67,64 @@ func (pt *PeerTracker) RecordPeer(pi peer.AddrInfo, connected bool) {
 
 	rec, exists := pt.peers[pi.ID]
 	if !exists {
+		pt.evictStaleOrExcessLocked(now)
+		// If still at capacity and incoming record is only a disconnected referral, skip to preserve active entries.
+		if len(pt.peers) >= MaxTrackedPeers && !connected {
+			return
+		}
+		viaStr := ""
+		if via != "" && via != pi.ID {
+			viaStr = via.String()
+		}
 		pt.peers[pi.ID] = &PeerRecord{
-			ID:        pi.ID,
-			Addrs:     addrStrings,
-			FirstSeen: now,
-			LastSeen:  now,
-			Connected: connected,
+			ID:            pi.ID,
+			Addrs:         addrStrings,
+			FirstSeen:     now,
+			LastSeen:      now,
+			Connected:     connected,
+			DiscoveredVia: viaStr,
 		}
 		return
 	}
 
 	rec.LastSeen = now
-	rec.Connected = connected
+	if connected {
+		rec.Connected = true
+	}
+	if via != "" && via != pi.ID && rec.DiscoveredVia == "" {
+		rec.DiscoveredVia = via.String()
+	}
 	if len(addrStrings) > 0 {
 		rec.Addrs = addrStrings
+	}
+}
+
+func (pt *PeerTracker) evictStaleOrExcessLocked(now time.Time) {
+	// 1. Prune expired disconnected peers
+	for id, rec := range pt.peers {
+		if !rec.Connected && now.Sub(rec.LastSeen) > KnownPeerStaleTTL {
+			delete(pt.peers, id)
+		}
+	}
+
+	// 2. If still at capacity, evict the oldest disconnected peer (LRU)
+	for len(pt.peers) >= MaxTrackedPeers {
+		var oldestID peer.ID
+		var oldestTime time.Time
+		foundDisconnected := false
+		for id, rec := range pt.peers {
+			if !rec.Connected {
+				if !foundDisconnected || rec.LastSeen.Before(oldestTime) {
+					oldestID = id
+					oldestTime = rec.LastSeen
+					foundDisconnected = true
+				}
+			}
+		}
+		if !foundDisconnected {
+			break
+		}
+		delete(pt.peers, oldestID)
 	}
 }
 
