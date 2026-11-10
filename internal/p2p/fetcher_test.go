@@ -197,3 +197,190 @@ func TestFetcherQuotaGracefulDegradation(t *testing.T) {
 		t.Fatalf("catalog must not be marked stored when quota is exceeded")
 	}
 }
+
+
+func TestFetcherReputationTracking(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	bsA, _ := storage.NewBlockStore(filepath.Join(tmpDir, "nodeA"))
+	bsB, _ := storage.NewBlockStore(filepath.Join(tmpDir, "nodeB"))
+
+	_, privA, _ := crypto.GenerateKeyPair()
+	_, privB, _ := crypto.GenerateKeyPair()
+
+	hostA, _ := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privA,
+		DisableRelay: true,
+	})
+	defer hostA.Close()
+
+	hostB, _ := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privB,
+		DisableRelay: true,
+	})
+	defer hostB.Close()
+
+	chunk := []byte("high-quality-audio-sample")
+	validHash := crypto.HashChunkHex(chunk)
+	_ = bsB.Put(validHash, chunk)
+
+	_ = NewProtocolHandler(hostB, &memoryProvider{
+		blocks: map[string][]byte{validHash: chunk},
+	})
+
+	mockCat := &mockCatalogRecorder{}
+	fetcher := NewFetcher(hostA, bsA, mockCat)
+
+	if err := hostA.Connect(ctx, hostB.AddrInfo()); err != nil {
+		t.Fatalf("failed to connect hostA to hostB: %v", err)
+	}
+
+	// Initial score should be 100
+	if fetcher.ReputationTracker().Score(hostB.ID()) != BaseReputationScore {
+		t.Fatalf("expected initial score %f", BaseReputationScore)
+	}
+
+	// Fetch block successfully
+	data, err := fetcher.FetchBlock(ctx, "track-rep-1", 0, validHash)
+	if err != nil {
+		t.Fatalf("failed to fetch block: %v", err)
+	}
+	if len(data) != len(chunk) {
+		t.Fatalf("expected %d bytes, got %d", len(chunk), len(data))
+	}
+
+	// Verify reputation updated
+	stats, ok := fetcher.ReputationTracker().GetStats(hostB.ID())
+	if !ok {
+		t.Fatalf("expected reputation stats to exist for hostB")
+	}
+	if stats.BlocksVerified != 1 {
+		t.Fatalf("expected 1 verified block, got %d", stats.BlocksVerified)
+	}
+	if stats.AvgLatencyMs <= 0 {
+		t.Fatalf("expected positive latency, got %f", stats.AvgLatencyMs)
+	}
+}
+
+func TestFetcherQuarantineOnCorruptedBlock(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	bsA, _ := storage.NewBlockStore(filepath.Join(tmpDir, "nodeA"))
+
+	_, privA, _ := crypto.GenerateKeyPair()
+	_, privB, _ := crypto.GenerateKeyPair()
+
+	hostA, _ := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privA,
+		DisableRelay: true,
+	})
+	defer hostA.Close()
+
+	hostB, _ := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privB,
+		DisableRelay: true,
+	})
+	defer hostB.Close()
+
+	// Host B has corrupted data for the requested hash
+	expectedChunk := []byte("expected-clean-audio")
+	expectedHash := crypto.HashChunkHex(expectedChunk)
+	corruptedChunk := []byte("tampered-audio-payload")
+
+	_ = NewProtocolHandler(hostB, &memoryProvider{
+		blocks: map[string][]byte{expectedHash: corruptedChunk},
+	})
+
+	mockCat := &mockCatalogRecorder{}
+	fetcher := NewFetcher(hostA, bsA, mockCat)
+
+	if err := hostA.Connect(ctx, hostB.AddrInfo()); err != nil {
+		t.Fatalf("failed to connect hostA to hostB: %v", err)
+	}
+
+	// Attempt fetch: should fail due to hash mismatch
+	_, err := fetcher.FetchBlock(ctx, "track-corrupt", 0, expectedHash)
+	if err == nil {
+		t.Fatal("expected fetch to fail on hash mismatch")
+	}
+
+	// Host B must now be quarantined
+	if !fetcher.ReputationTracker().IsQuarantinedNow(hostB.ID()) {
+		t.Fatal("expected Host B to be quarantined after delivering corrupted block")
+	}
+
+	stats, _ := fetcher.ReputationTracker().GetStats(hostB.ID())
+	if stats.HashMismatchCount != 1 {
+		t.Fatalf("expected 1 hash mismatch, got %d", stats.HashMismatchCount)
+	}
+
+	// Subsequent candidate search should filter out Host B
+	prioritized := fetcher.prioritizedSwarmPeers()
+	for _, p := range prioritized {
+		if p == hostB.ID() {
+			t.Fatalf("quarantined Host B must be excluded from candidate list")
+		}
+	}
+}
+
+func TestFetcherPrioritizesHighestReputationPeer(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	bsA, _ := storage.NewBlockStore(filepath.Join(tmpDir, "nodeA"))
+
+	_, privA, _ := crypto.GenerateKeyPair()
+	_, privB, _ := crypto.GenerateKeyPair()
+	_, privC, _ := crypto.GenerateKeyPair()
+
+	hostA, _ := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privA,
+		DisableRelay: true,
+	})
+	defer hostA.Close()
+
+	hostB, _ := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privB,
+		DisableRelay: true,
+	})
+	defer hostB.Close()
+
+	hostC, _ := NewHost(HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privC,
+		DisableRelay: true,
+	})
+	defer hostC.Close()
+
+	_ = hostA.Connect(ctx, hostB.AddrInfo())
+	_ = hostA.Connect(ctx, hostC.AddrInfo())
+
+	mockCat := &mockCatalogRecorder{}
+	fetcher := NewFetcher(hostA, bsA, mockCat)
+
+	// Host C has verified 10 blocks (score ~ 120)
+	for i := 0; i < 10; i++ {
+		fetcher.ReputationTracker().RecordSuccess(hostC.ID(), 20*time.Millisecond, 256)
+	}
+
+	// Host B has 1 stream error (score ~ 85)
+	fetcher.ReputationTracker().RecordFailure(hostB.ID(), FailureStreamError)
+
+	prioritized := fetcher.prioritizedSwarmPeers()
+	if len(prioritized) < 2 {
+		t.Fatalf("expected at least 2 connected peers, got %d", len(prioritized))
+	}
+
+	// Host C must be prioritized ahead of Host B
+	if prioritized[0] != hostC.ID() {
+		t.Fatalf("expected highest reputation peer hostC (%s) to be first, got %s", hostC.ID(), prioritized[0])
+	}
+}
