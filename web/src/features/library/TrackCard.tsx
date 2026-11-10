@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, Pause, Pin, Trash2, ShieldCheck, Flag, Ban, ListPlus, Download } from 'lucide-react';
+import { Play, Pause, Pin, Trash2, ShieldCheck, Flag, Ban, ListPlus, Download, HardDrive, Radio, CloudOff } from 'lucide-react';
 import type { Track } from '../../types/track';
 import { generateCoverDataUri } from '../../shared/utils/artwork';
 import { apiClient } from '../../shared/api/client';
@@ -8,6 +8,7 @@ interface TrackCardProps {
   track: Track;
   isPlaying: boolean;
   isActiveTrack: boolean;
+  connectedPeers?: number;
   onPlay: () => void;
   onTogglePin: () => void;
   onDelete: () => void;
@@ -19,6 +20,7 @@ export const TrackCard: React.FC<TrackCardProps> = ({
   track,
   isPlaying,
   isActiveTrack,
+  connectedPeers = 0,
   onPlay,
   onTogglePin,
   onDelete,
@@ -204,6 +206,65 @@ export const TrackCard: React.FC<TrackCardProps> = ({
         >
           {track.bitrate_kbps >= 320 ? '320 kbps' : `${track.bitrate_kbps} kbps`}
         </span>
+        {/* Swarm Availability & Local Storage Badge */}
+        {track.availability_pct >= 100 ? (
+          <span
+            title="Audio is 100% cached on this machine. Ready for instant offline playback."
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.68rem',
+              padding: '2px 7px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'rgba(16, 185, 129, 0.08)',
+              border: '1px solid rgba(16, 185, 129, 0.25)',
+              color: 'var(--accent-emerald)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <HardDrive size={11} /> Local
+          </span>
+        ) : connectedPeers > 0 ? (
+          <span
+            title={`Audio streams on-demand from connected swarm peers (${connectedPeers} peers connected).`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.68rem',
+              padding: '2px 7px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'rgba(0, 255, 204, 0.08)',
+              border: '1px solid rgba(0, 255, 204, 0.25)',
+              color: 'var(--accent-sky)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <Radio size={11} /> P2P Swarm
+          </span>
+        ) : (
+          <span
+            title="Catalog manifest is synchronized, but no seeders are currently online in the swarm."
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '0.68rem',
+              padding: '2px 7px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'rgba(255, 170, 0, 0.08)',
+              border: '1px solid rgba(255, 170, 0, 0.25)',
+              color: 'var(--accent-amber)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <CloudOff size={11} /> No Seeders
+          </span>
+        )}
 
         <span
           style={{

@@ -3,6 +3,7 @@ import {
   Play,
   Pause,
   Loader2,
+  HardDrive,
   WifiOff,
   SkipBack,
   SkipForward,
@@ -30,6 +31,7 @@ import { VolumeControl } from './VolumeControl';
 import { Badge } from '../../shared/components/Badge';
 import { generateCoverDataUri } from '../../shared/utils/artwork';
 import { apiClient } from '../../shared/api/client';
+import { useNodeStatus } from '../../shared/hooks/useNodeStatus';
 
 interface AudioPlayerBarProps {
   audioElement?: HTMLAudioElement | null;
@@ -95,6 +97,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   const [isRateMenuOpen, setIsRateMenuOpen] = useState(false);
   const [isSleepMenuOpen, setIsSleepMenuOpen] = useState(false);
   const [isFullscreenOpen, setIsFullscreenOpen] = useState(false);
+  const { status: nodeStatus } = useNodeStatus();
+  const connectedPeers = nodeStatus?.connected_peers ?? 0;
 
   const closeAllPopups = () => {
     setIsLyricsOpen(false);
@@ -391,10 +395,25 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           gap: '16px',
         }}
       >
-        {/* Left: Track Information with Artwork & Stream Status */}
+        {/* Left: Track Information with Artwork & Stream Status (Clickable Now-Playing view) */}
         <div
+          onClick={() => setIsFullscreenOpen(true)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setIsFullscreenOpen(true);
+            }
+          }}
+          title="Open Fullscreen Studio (Now Playing)"
           style={{
             display: 'flex',
+            cursor: 'pointer',
+            padding: '4px 8px',
+            margin: '-4px -8px',
+            borderRadius: 'var(--radius-md)',
+            transition: 'background-color 0.2s ease',
             alignItems: 'center',
             gap: '12px',
             width: '260px',
@@ -496,16 +515,36 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                 >
                   <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> Buffering
                 </span>
-              ) : (
+              ) : ((currentTrack.availability_pct ?? 0) >= 100) ? (
                 <span
+                  title="Audio is 100% cached on this machine. Ready for instant offline playback."
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '4px',
                     fontSize: '0.65rem',
-                    color: 'var(--text-muted)',
-                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                    border: '1px solid var(--border-glass)',
+                    color: 'var(--accent-emerald)',
+                    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                    border: '1px solid rgba(16, 185, 129, 0.25)',
+                    padding: '1px 6px',
+                    borderRadius: 'var(--radius-full)',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  <HardDrive size={10} /> Local
+                </span>
+              ) : connectedPeers > 0 ? (
+                <span
+                  title={`Streaming from P2P swarm (${connectedPeers} peers).`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '0.65rem',
+                    color: 'var(--accent-primary)',
+                    backgroundColor: 'rgba(249, 115, 22, 0.12)',
+                    border: '1px solid rgba(249, 115, 22, 0.25)',
                     padding: '1px 6px',
                     borderRadius: 'var(--radius-full)',
                     whiteSpace: 'nowrap',
@@ -521,6 +560,25 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                     }}
                   />
                   P2P Stream
+                </span>
+              ) : (
+                <span
+                  title="No swarm seeders are currently online for this remote track."
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '0.65rem',
+                    color: 'var(--accent-amber)',
+                    backgroundColor: 'rgba(255, 170, 0, 0.12)',
+                    border: '1px solid rgba(255, 170, 0, 0.25)',
+                    padding: '1px 6px',
+                    borderRadius: 'var(--radius-full)',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  <WifiOff size={10} /> No Seeders
                 </span>
               )}
             </div>
