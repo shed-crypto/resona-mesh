@@ -43,20 +43,79 @@ type ReleaseWireResponse struct {
 
 // ReleaseHandler coordinates P2P release propagation over libp2p.
 type ReleaseHandler struct {
-	host    *Host
-	updater *updater.Engine
-	mu      sync.RWMutex
+	host     *Host
+	updater  *updater.Engine
+	mu       sync.RWMutex
+	lastSync map[peer.ID]time.Time
 }
 
 // NewReleaseHandler registers the release protocol on the libp2p host.
 func NewReleaseHandler(h *Host, u *updater.Engine) *ReleaseHandler {
 	rh := &ReleaseHandler{
-		host:    h,
-		updater: u,
+		host:     h,
+		updater:  u,
+		lastSync: make(map[peer.ID]time.Time),
 	}
 
 	h.Raw().SetStreamHandler(protocol.ProtocolRelease, rh.handleStream)
+
+	// Register reactive peer connection listener to exchange release manifests upon handshake
+	bundle := &network.NotifyBundle{
+		ConnectedF: func(net network.Network, conn network.Conn) {
+			peerID := conn.RemotePeer()
+			go rh.onPeerConnected(peerID)
+		},
+	}
+	h.Raw().Network().Notify(bundle)
+
 	return rh
+}
+
+const peerSyncCooldown = 30 * time.Second
+
+func (rh *ReleaseHandler) onPeerConnected(peerID peer.ID) {
+	if rh.host == nil || rh.host.Raw() == nil || peerID == rh.host.Raw().ID() {
+		return
+	}
+
+	rh.mu.Lock()
+	if last, ok := rh.lastSync[peerID]; ok && time.Since(last) < peerSyncCooldown {
+		rh.mu.Unlock()
+		return
+	}
+	rh.lastSync[peerID] = time.Now()
+
+	// Prune old sync entries if map grows large
+	if len(rh.lastSync) > 256 {
+		now := time.Now()
+		for p, t := range rh.lastSync {
+			if now.Sub(t) > 5*time.Minute {
+				delete(rh.lastSync, p)
+			}
+		}
+	}
+	rh.mu.Unlock()
+
+	// Brief delay for connection multiplexer and stream protocols to settle
+	time.Sleep(300 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), ReleaseStreamTimeout)
+	defer cancel()
+
+	if rh.updater == nil {
+		return
+	}
+
+	state := rh.updater.State()
+	if state.AvailableRelease != nil {
+		if err := rh.AnnounceRelease(ctx, peerID, state.AvailableRelease); err != nil {
+			slog.Debug("Failed to announce release to connected peer", "peer", peerID, "err", err)
+		}
+	} else if state.Status == updater.StatusIdle {
+		if _, err := rh.QueryPeer(ctx, peerID); err != nil {
+			slog.Debug("Failed to query release from connected peer", "peer", peerID, "err", err)
+		}
+	}
 }
 
 func (rh *ReleaseHandler) handleStream(s network.Stream) {

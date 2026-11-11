@@ -132,3 +132,111 @@ func TestP2PReleaseAnnouncementAndQuery(t *testing.T) {
 	}
 	_ = handlerB
 }
+
+func TestReleaseHandlerReactivePeerHandshake(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tmpC := t.TempDir()
+	tmpD := t.TempDir()
+
+	relPub, relPriv, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("failed to generate key pair: %v", err)
+	}
+	relPubHex := crypto.PublicKeyToHex(relPub)
+
+	_, privC, _ := crypto.GenerateKeyPair()
+	_, privD, _ := crypto.GenerateKeyPair()
+
+	hostC, err := p2p.NewHost(p2p.HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privC,
+		DisableRelay: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create host C: %v", err)
+	}
+	defer hostC.Close()
+
+	hostD, err := p2p.NewHost(p2p.HostConfig{
+		ListenAddr:   "/ip4/127.0.0.1/tcp/0",
+		PrivateKey:   privD,
+		DisableRelay: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create host D: %v", err)
+	}
+	defer hostD.Close()
+
+	// Node C is on 0.1.0-alpha, status Idle
+	updaterC, err := updater.NewEngine(updater.Config{
+		CurrentVersion: "0.1.0-alpha",
+		ReleasePubKey:  relPubHex,
+		DataDir:        tmpC,
+	})
+	if err != nil {
+		t.Fatalf("failed to create updater C: %v", err)
+	}
+
+	// Node D is currently on 0.1.0-alpha, staging v0.2.0 release
+	updaterD, err := updater.NewEngine(updater.Config{
+		CurrentVersion: "0.1.0-alpha",
+		ReleasePubKey:  relPubHex,
+		DataDir:        tmpD,
+	})
+	if err != nil {
+		t.Fatalf("failed to create updater D: %v", err)
+	}
+
+	manifest := &protocol.ReleaseManifest{
+		SchemaVersion:  protocol.SchemaReleaseV1,
+		Version:        "0.2.0",
+		TargetOS:       runtime.GOOS,
+		TargetArch:     runtime.GOARCH,
+		BinaryHash:     "aabbccddeeff11223344556677889900aabbccddeeff11223344556677889900",
+		TotalSizeBytes: 4096,
+		BlockSize:      protocol.BlockSize,
+		BlockHashes:    []string{"aabbccddeeff11223344556677889900aabbccddeeff11223344556677889900"},
+		ReleasePubKey:  relPubHex,
+		PublishedAt:    time.Now().Unix(),
+		ReleaseNotes:   "Reactive Handshake Verification",
+	}
+	payload := protocol.CanonicalReleasePayload(manifest)
+	sig := crypto.SignWithDomain(relPriv, crypto.DomainReleaseManifest, []byte(payload))
+	manifest.Signature = hex.EncodeToString(sig)
+
+	// Register release on updaterD
+	_, err = updaterD.ProcessAnnouncedRelease(manifest)
+	if err != nil {
+		t.Fatalf("failed to stage release on updater D: %v", err)
+	}
+
+	// Initialize handlers with reactive NotifyBundle listeners
+	_ = p2p.NewReleaseHandler(hostC, updaterC)
+	_ = p2p.NewReleaseHandler(hostD, updaterD)
+
+	// Connect hosts. This triggers ConnectedF -> onPeerConnected asynchronously
+	if err := hostC.Connect(ctx, hostD.AddrInfo()); err != nil {
+		t.Fatalf("failed to connect host C to host D: %v", err)
+	}
+
+	// Wait up to 3 seconds for the reactive handshake to exchange manifests
+	deadline := time.Now().Add(4 * time.Second)
+	updated := false
+	for time.Now().Before(deadline) {
+		if updaterC.State().Status == updater.StatusAvailable {
+			updated = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if !updated {
+		t.Fatalf("Node C did not reactively receive the release announcement on peer connect; status=%s", updaterC.State().Status)
+	}
+	if updaterC.State().AvailableRelease == nil || updaterC.State().AvailableRelease.Version != "0.2.0" {
+		t.Fatalf("Node C reactive release version mismatch, got: %v", updaterC.State().AvailableRelease)
+	}
+}
+
