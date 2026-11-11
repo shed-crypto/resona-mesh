@@ -1,5 +1,7 @@
 # ResonaMesh Native Build Script for Windows PowerShell
 param (
+    [string]$Version = "0.1.0-alpha",
+    [string]$Output = "resonamesh.exe",
     [switch]$SkipFrontend = $false,
     [switch]$RunTests = $false,
     [switch]$RunAcceptance = $false
@@ -83,7 +85,7 @@ if (Test-Path "trust.local.json") {
     }
 }
 
-$ldflags = "-s -w -X main.AppVersion=0.1.0-alpha -X main.AppName=ResonaMesh"
+$ldflags = "-s -w -X main.AppVersion=$Version -X main.AppName=ResonaMesh"
 if ($embeddedRecoveryPubKey -ne "") {
     $ldflags += " -X main.RecoveryPubKey=$embeddedRecoveryPubKey"
 }
@@ -94,12 +96,12 @@ if ($embeddedSeeds -ne "") {
     $ldflags += " -X main.DefaultBootstrapSeeds=$embeddedSeeds"
 }
 
-go build -ldflags $ldflags -o resonamesh.exe ./cmd/resonamesh
+go build -ldflags $ldflags -o $Output ./cmd/resonamesh
 
-if (Test-Path "resonamesh.exe") {
-    $size = (Get-Item "resonamesh.exe").Length / 1MB
-    Write-Host "`nSUCCESS: resonamesh.exe generated ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
-    Write-Host "Run with: .\resonamesh.exe --http 127.0.0.1:8080 --p2p 4001" -ForegroundColor Cyan
+if (Test-Path $Output) {
+    $size = (Get-Item $Output).Length / 1MB
+    Write-Host "`nSUCCESS: $Output generated ($([math]::Round($size, 2)) MB) [Version: $Version]" -ForegroundColor Green
+    Write-Host "Run with: .\$Output --http 127.0.0.1:8080 --p2p 4001" -ForegroundColor Cyan
 } else {
-    Write-Error "Build failed: resonamesh.exe was not created."
+    Write-Error "Build failed: $Output was not created."
 }

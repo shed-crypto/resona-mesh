@@ -43,11 +43,9 @@ var (
 )
 
 func main() {
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-v" {
-			fmt.Printf("%s v%s\n", AppName, AppVersion)
-			os.Exit(0)
-		}
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Printf("%s v%s\n", AppName, AppVersion)
+		os.Exit(0)
 	}
 
 	if len(os.Args) > 1 {

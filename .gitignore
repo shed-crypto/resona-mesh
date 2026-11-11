@@ -38,6 +38,8 @@ desktop.ini
 # === Keys (NEVER commit private keys) ===
 *.pem
 *.key
+*-signer.json
+*release*.json
 data/keys/
 
 # === Environment & Secrets ===
