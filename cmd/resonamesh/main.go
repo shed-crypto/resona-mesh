@@ -184,6 +184,7 @@ func main() {
 
 	// 5. Initialize HTTP REST & streaming server
 	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
+	apiServer.SetAppVersion(AppVersion)
 
 	// 6. Initialize P2P Host and Swarm engine (Dual-Stack IPv4 + IPv6 for direct mobile bypass)
 	hostConfig := p2p.HostConfig{

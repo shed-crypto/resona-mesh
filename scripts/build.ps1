@@ -85,7 +85,7 @@ if (Test-Path "trust.local.json") {
     }
 }
 
-$ldflags = "-s -w -X main.AppVersion=$Version -X main.AppName=ResonaMesh"
+$ldflags = "-s -w -X main.AppVersion=$Version -X resonamesh/internal/api.AppVersion=$Version -X main.AppName=ResonaMesh"
 if ($embeddedRecoveryPubKey -ne "") {
     $ldflags += " -X main.RecoveryPubKey=$embeddedRecoveryPubKey"
 }
