@@ -200,3 +200,97 @@ func TestUpdaterSecurityRejections(t *testing.T) {
 		t.Fatalf("expected ErrVersionNotNewer, got accepted=%v, err=%v", accepted, err)
 	}
 }
+
+func TestUpdaterApplyWithLockedExistingBackup(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate release key: %v", err)
+	}
+	pubHex := crypto.PublicKeyToHex(pub)
+
+	bs, err := storage.NewBlockStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create blockstore: %v", err)
+	}
+
+	sourceData := []byte("UPGRADED_BINARY_PAYLOAD_V2")
+	sourcePath := filepath.Join(tmpDir, "source.exe")
+	if err := os.WriteFile(sourcePath, sourceData, 0755); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	targetExePath := filepath.Join(tmpDir, "running.exe")
+	if err := os.WriteFile(targetExePath, []byte("ORIGINAL_BINARY_PAYLOAD_V1"), 0755); err != nil {
+		t.Fatalf("failed to write target exe: %v", err)
+	}
+
+	// Create an existing .old backup file and hold it open to lock it
+	backupPath := targetExePath + ".old"
+	if err := os.WriteFile(backupPath, []byte("LOCKED_OLD_BACKUP"), 0755); err != nil {
+		t.Fatalf("failed to write backup: %v", err)
+	}
+	lockFile, err := os.OpenFile(backupPath, os.O_RDWR, 0755)
+	if err != nil {
+		t.Fatalf("failed to open lock file: %v", err)
+	}
+	defer lockFile.Close()
+
+	seeder, err := updater.NewEngine(updater.Config{
+		CurrentVersion: "0.2.0",
+		DataDir:        filepath.Join(tmpDir, "seeder"),
+		BlockStore:     bs,
+	})
+	if err != nil {
+		t.Fatalf("failed to create seeder: %v", err)
+	}
+
+	manifest, err := seeder.CreateRelease(sourcePath, "0.2.0", "Lock Resilience Test", priv)
+	if err != nil {
+		t.Fatalf("CreateRelease failed: %v", err)
+	}
+
+	client, err := updater.NewEngine(updater.Config{
+		CurrentVersion: "0.1.0",
+		ExecutablePath: targetExePath,
+		ReleasePubKey:  pubHex,
+		DataDir:        filepath.Join(tmpDir, "client"),
+		BlockStore:     bs,
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	if _, err := client.ProcessAnnouncedRelease(manifest); err != nil {
+		t.Fatalf("ProcessAnnouncedRelease failed: %v", err)
+	}
+	if err := client.DownloadRelease(context.Background()); err != nil {
+		t.Fatalf("DownloadRelease failed: %v", err)
+	}
+
+	// Apply update should succeed even with locked .old file via timestamped backup fallback
+	if err := client.ApplyUpdate(); err != nil {
+		t.Fatalf("ApplyUpdate failed with locked backup: %v", err)
+	}
+
+	updatedData, err := os.ReadFile(targetExePath)
+	if err != nil {
+		t.Fatalf("failed to read updated binary: %v", err)
+	}
+	if !bytes.Equal(updatedData, sourceData) {
+		t.Fatal("updated executable does not match source data")
+	}
+
+	// Test rollback also finds the timestamped backup
+	if err := client.Rollback(); err != nil {
+		t.Fatalf("Rollback failed: %v", err)
+	}
+	restoredData, err := os.ReadFile(targetExePath)
+	if err != nil {
+		t.Fatalf("failed to read restored binary: %v", err)
+	}
+	if !bytes.Equal(restoredData, []byte("ORIGINAL_BINARY_PAYLOAD_V1")) {
+		t.Fatal("restored executable does not match original binary")
+	}
+}

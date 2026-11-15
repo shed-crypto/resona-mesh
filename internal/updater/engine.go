@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,12 +23,12 @@ import (
 )
 
 var (
-	ErrInvalidManifest     = errors.New("updater: invalid release manifest")
-	ErrUntrustedReleaseKey = errors.New("updater: untrusted release authority public key")
+	ErrInvalidManifest      = errors.New("updater: invalid release manifest")
+	ErrUntrustedReleaseKey  = errors.New("updater: untrusted release authority public key")
 	ErrArchitectureMismatch = errors.New("updater: target os or architecture mismatch")
-	ErrVersionNotNewer     = errors.New("updater: release version is not newer than current")
-	ErrNoReleaseAvailable  = errors.New("updater: no release available to download")
-	ErrNotReadyToApply     = errors.New("updater: release binary not ready to apply")
+	ErrVersionNotNewer      = errors.New("updater: release version is not newer than current")
+	ErrNoReleaseAvailable   = errors.New("updater: no release available to download")
+	ErrNotReadyToApply      = errors.New("updater: release binary not ready to apply")
 	ErrIntegrityCheckFailed = errors.New("updater: assembled binary checksum does not match manifest")
 )
 
@@ -67,12 +68,12 @@ type RemoteBlockFetcher interface {
 
 // Config provides dependencies for the auto-updater engine.
 type Config struct {
-	CurrentVersion   string
-	ExecutablePath   string
-	ReleasePubKey    string
-	DataDir          string
-	BlockStore       BlockProvider
-	RemoteFetcher    RemoteBlockFetcher
+	CurrentVersion string
+	ExecutablePath string
+	ReleasePubKey  string
+	DataDir        string
+	BlockStore     BlockProvider
+	RemoteFetcher  RemoteBlockFetcher
 }
 
 // Engine coordinates release discovery, chunk downloading, verification, and atomic executable swapping.
@@ -87,6 +88,7 @@ type Engine struct {
 	totalBlocks      int
 	errorMessage     string
 	stagedPath       string
+	lastBackupPath   string
 }
 
 // NewEngine constructs and initializes the auto-updater.
@@ -363,26 +365,58 @@ func (e *Engine) ApplyUpdate() error {
 	}
 
 	// 1. Cross-platform atomic replacement
+	// First try default backup path; if locked or in-use by prior process, generate unique timestamped path
 	backupPath := targetExe + ".old"
-	_ = os.Remove(backupPath)
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		backupPath = fmt.Sprintf("%s.old.%d", targetExe, time.Now().UnixNano())
+	}
 
-	// Rename running binary to .old (permitted on Windows NTFS and POSIX)
+	// Rename running binary to backupPath (permitted on Windows NTFS and POSIX)
 	if err := os.Rename(targetExe, backupPath); err != nil {
-		return fmt.Errorf("updater: failed to move existing executable to backup: %w", err)
+		// Retry with unique timestamped backup path if destination was locked
+		backupPath = fmt.Sprintf("%s.old.%d", targetExe, time.Now().UnixNano())
+		if errRetry := os.Rename(targetExe, backupPath); errRetry != nil {
+			return fmt.Errorf("updater: failed to move existing executable to backup: %w", errRetry)
+		}
 	}
 
 	// Move staged binary to target executable
 	if err := os.Rename(e.stagedPath, targetExe); err != nil {
-		// Rollback attempt
-		_ = os.Rename(backupPath, targetExe)
-		return fmt.Errorf("updater: failed to replace target executable: %w (rollback performed)", err)
+		// Cross-volume fallback: copy bytes and remove source
+		if copyErr := copyFile(e.stagedPath, targetExe); copyErr == nil {
+			_ = os.Remove(e.stagedPath)
+		} else {
+			// Rollback attempt
+			_ = os.Rename(backupPath, targetExe)
+			return fmt.Errorf("updater: failed to replace target executable: %w (rollback performed)", err)
+		}
 	}
 
 	// Ensure executable permissions on POSIX
 	_ = os.Chmod(targetExe, 0755)
 
+	e.lastBackupPath = backupPath
 	slog.Info("Autonomous atomic binary update applied successfully", "executable", targetExe, "backup", backupPath)
 	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
 }
 
 // Rollback restores the previous executable backup if an update fails to launch.
@@ -391,19 +425,67 @@ func (e *Engine) Rollback() error {
 	defer e.mu.Unlock()
 
 	targetExe := e.cfg.ExecutablePath
-	backupPath := targetExe + ".old"
+	backupPath := e.lastBackupPath
+	if backupPath == "" || !fileExists(backupPath) {
+		backupPath = findLatestBackup(targetExe)
+	}
 
-	if _, err := os.Stat(backupPath); err != nil {
-		return fmt.Errorf("updater: no backup executable found to restore: %w", err)
+	if backupPath == "" || !fileExists(backupPath) {
+		return fmt.Errorf("updater: no backup executable found to restore")
 	}
 
 	_ = os.Remove(targetExe)
 	if err := os.Rename(backupPath, targetExe); err != nil {
-		return fmt.Errorf("updater: failed to restore backup executable: %w", err)
+		if copyErr := copyFile(backupPath, targetExe); copyErr == nil {
+			_ = os.Remove(backupPath)
+		} else {
+			return fmt.Errorf("updater: failed to restore backup executable: %w", err)
+		}
 	}
 
 	slog.Info("Executable rollback successfully completed", "restored_path", targetExe)
 	return nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func findLatestBackup(targetExe string) string {
+	dir := filepath.Dir(targetExe)
+	base := filepath.Base(targetExe)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		defaultOld := targetExe + ".old"
+		if fileExists(defaultOld) {
+			return defaultOld
+		}
+		return ""
+	}
+
+	var latestTimestamped string
+	var latestTime int64
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, base+".old.") {
+			tsStr := strings.TrimPrefix(name, base+".old.")
+			if ts, err := strconv.ParseInt(tsStr, 10, 64); err == nil {
+				if ts > latestTime {
+					latestTime = ts
+					latestTimestamped = filepath.Join(dir, name)
+				}
+			}
+		}
+	}
+	if latestTimestamped != "" {
+		return latestTimestamped
+	}
+	defaultOld := targetExe + ".old"
+	if fileExists(defaultOld) {
+		return defaultOld
+	}
+	return ""
 }
 
 // CreateRelease reads an executable binary, splits it into 256 KiB blocks, saves them to BlockStore, and signs the manifest.
