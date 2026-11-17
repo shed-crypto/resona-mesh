@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,21 +30,40 @@ import (
 	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
+	"resonamesh/internal/updater"
 	"resonamesh/pkg/crypto"
+	"resonamesh/pkg/protocol"
 )
 
 var (
 	AppVersion            = "0.1.0-alpha"
 	AppName               = "ResonaMesh"
 	DefaultBootstrapSeeds = ""
+	ReleasePubKey         = ""
 )
 
 func main() {
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-v" {
-			fmt.Printf("%s v%s\n", AppName, AppVersion)
-			os.Exit(0)
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Printf("%s v%s\n", AppName, AppVersion)
+		os.Exit(0)
+	}
+
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "keygen":
+			handleKeygenCLI(os.Args[2:])
+			return
+		case "sign-rotation":
+			handleSignRotationCLI(os.Args[2:])
+			return
+		case "sign-release":
+			handleSignReleaseCLI(os.Args[2:])
+			return
 		}
+	}
+	// Clean up any previous executable backup (.old) from auto-updates
+	if exe, err := os.Executable(); err == nil {
+		_ = os.Remove(exe + ".old")
 	}
 
 	cfg, err := config.Load(".env", os.Args[1:])
@@ -162,13 +184,19 @@ func main() {
 
 	// 5. Initialize HTTP REST & streaming server
 	apiServer := api.NewServer(cfg, cat, imp, str, privKey)
+	apiServer.SetAppVersion(AppVersion)
 
 	// 6. Initialize P2P Host and Swarm engine (Dual-Stack IPv4 + IPv6 for direct mobile bypass)
 	hostConfig := p2p.HostConfig{
-		PrivateKey:         privKey,
-		DisableRelay:       cfg.DisableRelay,
-		EnableRelayService: cfg.Headless && !cfg.DisableRelay,
-		EnableNATPortMap:   cfg.NATPortMapEnabled,
+		PrivateKey:           privKey,
+		DisableRelay:         cfg.DisableRelay,
+		EnableRelayService:   (cfg.Headless || cfg.RelayMode == config.RelayModeTransit) && !cfg.DisableRelay,
+		RelayMode:            cfg.RelayMode,
+		RelayMaxReservations: cfg.RelayMaxReservations,
+		RelayMaxCircuits:     cfg.RelayMaxCircuits,
+		RelayDataLimitBytes:  cfg.RelayDataLimitBytes,
+		RelayDurationSec:     cfg.RelayDurationSec,
+		EnableNATPortMap:     cfg.NATPortMapEnabled,
 	}
 
 	baseListenAddrs := []string{
@@ -217,6 +245,7 @@ func main() {
 	// Register P2P Peer Exchange (PEX) wire protocol for swarm relay discovery
 	pexHandler := p2p.NewPeerExchange(p2pHost, peerTracker)
 	pexHandler.SetDisableRelay(cfg.DisableRelay)
+	pexHandler.SetRelayConfig(cfg.RelayMode, cfg.Headless, cfg.RelayMaxReservations, cfg.MinSwarmPeers, cfg.MaxSwarmPeers)
 
 	// Subscribe to event bus for reachability and UPnP address updates
 	if sub, err := p2pHost.Raw().EventBus().Subscribe([]any{
@@ -245,6 +274,11 @@ func main() {
 						switch evt.Reachability {
 						case network.ReachabilityPublic:
 							reach = "Public (Directly Reachable)"
+							if !cfg.DisableRelay && cfg.RelayMode != config.RelayModePEXOnly {
+								if err := p2pHost.EnableDynamicRelayService(hostConfig); err != nil {
+									slog.Warn("Failed to dynamically activate relay service on public reachability", "error", err)
+								}
+							}
 						case network.ReachabilityPrivate:
 							reach = "Private (Behind NAT)"
 						}
@@ -258,19 +292,23 @@ func main() {
 	// Probe STUN over the shared QUIC UDP socket prior to bootstrap so the first Identify
 	// handshake advertises the true external NAT-mapped UDP port and starts keepalive pinholing.
 	if !cfg.Headless {
+		p2p.SetDefaultSTUNServers(cfg.STUNServers)
 		stunCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
-		if diag, err := p2pHost.ProbeAndAdvertiseNAT(stunCtx, nil); err == nil && diag != nil {
+		if diag, err := p2pHost.ProbeAndAdvertiseNAT(stunCtx, cfg.STUNServers); err == nil && diag != nil {
 			slog.Info("Resolved public WAN endpoint on shared QUIC socket via STUN",
 				"public_ip", diag.PublicIP.String(),
 				"primary_udp_port", diag.PrimaryPort,
 				"nat_type", string(diag.NATType),
 				"candidate_ports", diag.CandidatePorts,
 			)
+			if !cfg.DisableRelay && cfg.RelayMode != config.RelayModePEXOnly && diag.NATType == p2p.NATTypeEndpointIndependent {
+				_ = p2pHost.EnableDynamicRelayService(hostConfig)
+			}
 		} else {
 			slog.Debug("Initial STUN probe notice", "error", err)
 		}
 		cancel()
-		p2pHost.StartSTUNKeepAlive(ctx, nil, 25*time.Second)
+		p2pHost.StartSTUNKeepAlive(ctx, cfg.STUNServers, 25*time.Second)
 	}
 
 	// Register universal swarm network connection listener
@@ -292,17 +330,6 @@ func main() {
 				}
 			}()
 
-			// Attempt circuit relay reservation so remote NAT peers can reach us via this peer
-			if !cfg.DisableRelay {
-				go func() {
-					resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
-					defer cancelRes()
-					if res, err := p2pHost.ReserveRelay(resCtx, remotePeer); err == nil && res != nil {
-						slog.Info("Active circuit relay reservation confirmed", "relay_peer", remotePeer.String())
-					}
-				}()
-			}
-
 			// Automatically query PEX to discover other swarm members (e.g. routed through relay)
 			go func() {
 				pexCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -316,6 +343,7 @@ func main() {
 			remotePeer := c.RemotePeer()
 			if len(n.ConnsToPeer(remotePeer)) == 0 {
 				peerTracker.SetConnected(remotePeer, false)
+				pexHandler.OnPeerDisconnected(remotePeer)
 				slog.Info("Swarm peer disconnected", "peer_id", remotePeer.String())
 			}
 		},
@@ -343,22 +371,16 @@ func main() {
 	}
 	defer discovery.Close()
 
-	// 9b. Start WAN dynamic bootstrap resolver and periodic reconnect loop
+	// 9b. Start WAN dynamic bootstrap resolver with Dormant Bootstrap policy
+	var bootstrapPeerIDs []peer.ID
+	var bootstrapMu sync.Mutex
 	if len(cfg.BootstrapSeeds) > 0 {
-		slog.Info("Starting dynamic bootstrap resolver", "seeds_count", len(cfg.BootstrapSeeds))
-		p2p.StartBootstrapLoop(ctx, p2pHost, peerTracker, cfg.BootstrapSeeds, 2*time.Minute, func(peerID peer.ID) {
+		slog.Info("Starting dynamic bootstrap resolver", "seeds_count", len(cfg.BootstrapSeeds), "min_swarm_peers", cfg.MinSwarmPeers)
+		p2p.StartBootstrapLoop(ctx, p2pHost, peerTracker, cfg.BootstrapSeeds, 2*time.Minute, cfg.MinSwarmPeers, func(peerID peer.ID) {
 			slog.Info("WAN bootstrap peer connected, triggering auto-sync of catalog manifests", "peer_id", peerID.String())
-
-			// Attempt circuit relay reservation on bootstrap peer
-			if !cfg.DisableRelay {
-				go func() {
-					resCtx, cancelRes := context.WithTimeout(context.Background(), 8*time.Second)
-					defer cancelRes()
-					if res, err := p2pHost.ReserveRelay(resCtx, peerID); err == nil && res != nil {
-						slog.Info("Active circuit relay reservation confirmed on bootstrap relay", "relay_peer", peerID.String())
-					}
-				}()
-			}
+			bootstrapMu.Lock()
+			bootstrapPeerIDs = append(bootstrapPeerIDs, peerID)
+			bootstrapMu.Unlock()
 
 			syncCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
@@ -375,6 +397,11 @@ func main() {
 				slog.Info("Discovered additional peers from bootstrap relay via PEX", "count", len(discovered))
 			}
 		})
+	}
+
+	// 9c. Start Smart Relay Orchestrator (manages reservations prioritizing community relays over bootstrap seeds)
+	if !cfg.DisableRelay && !cfg.Headless {
+		pexHandler.StartRelayOrchestrator(ctx, bootstrapPeerIDs)
 	}
 
 	// 9c. Periodic PEX discovery loop for continuous dynamic swarm convergence
@@ -402,6 +429,7 @@ func main() {
 	fetcher.SetQuotaManager(qm)
 	fetcher.SetBlockChecker(modEngine)
 	str.SetFetcher(fetcher)
+	apiServer.SetReputationTracker(fetcher.ReputationTracker())
 
 	// 11. Initialize Keeper background replication service
 	keeper := p2p.NewKeeper(p2p.KeeperConfig{
@@ -413,6 +441,39 @@ func main() {
 		slog.Warn("Failed to start keeper service", "error", err)
 	}
 	defer keeper.Stop()
+
+	
+	// 11b. Initialize autonomous P2P auto-updater engine
+	effectiveReleaseKey := ReleasePubKey
+	if cfg.ReleasePubKey != "" {
+		effectiveReleaseKey = cfg.ReleasePubKey
+	}
+	var releaseHandler *p2p.ReleaseHandler
+	updaterEngine, err := updater.NewEngine(updater.Config{
+		CurrentVersion: AppVersion,
+		ReleasePubKey:  effectiveReleaseKey,
+		DataDir:        cfg.DataDir,
+		BlockStore:     bs,
+		RemoteFetcher:  fetcher,
+	})
+	if err != nil {
+		slog.Warn("Failed to initialize auto-updater engine", "error", err)
+	} else {
+		apiServer.SetUpdater(updaterEngine)
+		releaseHandler = p2p.NewReleaseHandler(p2pHost, updaterEngine)
+		apiServer.SetReleaseHandler(releaseHandler)
+
+		if updaterEngine.State().AvailableRelease != nil {
+			go func() {
+				time.Sleep(3 * time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if count, err := releaseHandler.BroadcastRelease(ctx, updaterEngine.State().AvailableRelease); err == nil && count > 0 {
+					slog.Info("Proactively announced local release to connected peers", "peers_notified", count)
+				}
+			}()
+		}
+	}
 
 	// 12. Wire P2P dependencies and launch HTTP server if not co-hosted
 	apiServer.SetPeerTracker(peerTracker)
@@ -466,4 +527,192 @@ type catalogBlockProvider struct {
 
 func (p *catalogBlockProvider) GetBlock(_ context.Context, _ string, _ int, blockHash string) ([]byte, error) {
 	return p.bs.Get(blockHash)
+}
+
+func handleKeygenCLI(args []string) {
+	fs := flag.NewFlagSet("keygen", flag.ExitOnError)
+	outPath := fs.String("out", "", "Path to write encrypted key bundle JSON")
+	pass := fs.String("pass", "", "Passphrase to encrypt key bundle (or prompts if empty)")
+	_ = fs.Parse(args)
+
+	if *outPath == "" {
+		fmt.Fprintln(os.Stderr, "Error: --out <path> is required")
+		os.Exit(1)
+	}
+
+	passphrase := *pass
+	if passphrase == "" {
+		fmt.Print("Enter passphrase for key bundle encryption: ")
+		_, _ = fmt.Scanln(&passphrase)
+	}
+	if passphrase == "" {
+		fmt.Fprintln(os.Stderr, "Error: passphrase cannot be empty")
+		os.Exit(1)
+	}
+
+	pub, priv, err := crypto.GenerateKeyPair()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate key pair: %v\n", err)
+		os.Exit(1)
+	}
+
+	bundle, err := crypto.ExportEncryptedKey(priv, passphrase)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to encrypt key bundle: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(*outPath, bundle, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write key bundle to %s: %v\n", *outPath, err)
+		os.Exit(1)
+	}
+
+	pubHex := crypto.PublicKeyToHex(pub)
+	fmt.Printf("Generated key bundle successfully written to: %s\n", *outPath)
+	fmt.Printf("Public Key (hex): %s\n", pubHex)
+	os.Exit(0)
+}
+
+func handleSignRotationCLI(args []string) {
+	fs := flag.NewFlagSet("sign-rotation", flag.ExitOnError)
+	recKeyPath := fs.String("recovery-key", "", "Path to encrypted recovery key bundle JSON")
+	pass := fs.String("pass", "", "Passphrase for recovery key bundle")
+	role := fs.String("role", "ROOT_ADMIN", "Key role to rotate: ROOT_ADMIN or RELEASE")
+	oldPub := fs.String("old", "", "Old public key hex")
+	newPub := fs.String("new", "", "New public key hex")
+	epoch := fs.Uint64("epoch", 2, "New policy epoch (must be strictly greater than current)")
+	reason := fs.String("reason", "Key rotation event", "Human-readable justification")
+	netID := fs.String("network", "resonamesh-main", "Network identifier")
+	_ = fs.Parse(args)
+
+	if *recKeyPath == "" || *oldPub == "" || *newPub == "" {
+		fmt.Fprintln(os.Stderr, "Error: --recovery-key, --old, and --new are required")
+		os.Exit(1)
+	}
+
+	bundleBytes, err := os.ReadFile(*recKeyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read recovery key bundle: %v\n", err)
+		os.Exit(1)
+	}
+
+	passphrase := *pass
+	if passphrase == "" {
+		fmt.Print("Enter passphrase for recovery key bundle: ")
+		_, _ = fmt.Scanln(&passphrase)
+	}
+
+	recPriv, err := crypto.ImportEncryptedKey(bundleBytes, passphrase)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to decrypt recovery key: %v\n", err)
+		os.Exit(1)
+	}
+
+	recPub := recPriv.Public().(ed25519.PublicKey)
+	recPubHex := crypto.PublicKeyToHex(recPub)
+
+	rot := &protocol.KeyRotationEvent{
+		NetworkID:      *netID,
+		KeyRole:        *role,
+		NewPolicyEpoch: *epoch,
+		OldPubKey:      strings.ToLower(*oldPub),
+		NewPubKey:      strings.ToLower(*newPub),
+		RecoveryPubKey: recPubHex,
+		Reason:         *reason,
+		IssuedAt:       time.Now().Unix(),
+	}
+
+	payload := protocol.CanonicalKeyRotationPayload(rot)
+	sig := crypto.SignWithDomain(recPriv, crypto.DomainKeyRotation, []byte(payload))
+	rot.Signature = hex.EncodeToString(sig)
+	rot.EventID = crypto.HashChunkHex([]byte(payload))
+
+	jsonBytes, err := json.MarshalIndent(rot, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to serialize rotation event: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(string(jsonBytes))
+	os.Exit(0)
+}
+
+
+func handleSignReleaseCLI(args []string) {
+	fs := flag.NewFlagSet("sign-release", flag.ExitOnError)
+	binaryPath := fs.String("binary", "", "Path to executable binary to release")
+	version := fs.String("version", "", "Target SemVer version (e.g. 0.2.0)")
+	notes := fs.String("notes", "", "Release notes description")
+	keyPath := fs.String("key", "", "Path to encrypted release private key bundle JSON or raw private key hex")
+	pass := fs.String("pass", "", "Passphrase for encrypted release key bundle")
+	outPath := fs.String("out", "", "Output path for ReleaseManifest JSON (defaults to stdout)")
+	dataDir := fs.String("data-dir", "./data", "BlockStore directory to stage release chunks")
+	_ = fs.Parse(args)
+
+	if *binaryPath == "" || *version == "" || *keyPath == "" {
+		fmt.Fprintln(os.Stderr, "Error: --binary, --version, and --key are required")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	keyData, err := os.ReadFile(*keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read release key file: %v\n", err)
+		os.Exit(1)
+	}
+
+	var privKey ed25519.PrivateKey
+	if decryptedPriv, err := crypto.ImportEncryptedKey(keyData, *pass); err == nil {
+		privKey = decryptedPriv
+	} else {
+		trimmed := strings.TrimSpace(string(keyData))
+		if hexBytes, err := hex.DecodeString(trimmed); err == nil && len(hexBytes) == ed25519.PrivateKeySize {
+			privKey = ed25519.PrivateKey(hexBytes)
+		} else if len(keyData) == ed25519.PrivateKeySize {
+			privKey = ed25519.PrivateKey(keyData)
+		} else {
+			fmt.Fprintf(os.Stderr, "Failed to load release private key (encrypted bundle or 64-byte hex required): %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	bs, err := storage.NewBlockStore(*dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize blockstore: %v\n", err)
+		os.Exit(1)
+	}
+
+	eng, err := updater.NewEngine(updater.Config{
+		CurrentVersion: *version,
+		DataDir:        *dataDir,
+		BlockStore:     bs,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize updater engine: %v\n", err)
+		os.Exit(1)
+	}
+
+	manifest, err := eng.CreateRelease(*binaryPath, *version, *notes, privKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create release manifest: %v\n", err)
+		os.Exit(1)
+	}
+
+	jsonBytes, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to serialize release manifest: %v\n", err)
+		os.Exit(1)
+	}
+
+	targetOut := *outPath
+	if targetOut == "" {
+		targetOut = filepath.Join(*dataDir, "updates", "release.json")
+	}
+	_ = os.MkdirAll(filepath.Dir(targetOut), 0755)
+	if err := os.WriteFile(targetOut, jsonBytes, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write manifest to %s: %v\n", targetOut, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Release manifest successfully created and saved to %s (binary hash: %s, %d blocks)\n", targetOut, manifest.BinaryHash, len(manifest.BlockHashes))
+	os.Exit(0)
 }

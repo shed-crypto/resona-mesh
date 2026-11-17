@@ -56,14 +56,15 @@ export const WaveformScrubber: React.FC<WaveformScrubberProps> = ({
   };
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%', height: '20px' }}>
       <span
         style={{
           fontFamily: 'var(--font-mono)',
-          fontSize: '0.75rem',
+          fontSize: '0.72rem',
           color: 'var(--text-secondary)',
-          minWidth: '36px',
+          minWidth: '34px',
           textAlign: 'right',
+          userSelect: 'none',
         }}
       >
         {formatTime(currentTime)}
@@ -78,7 +79,7 @@ export const WaveformScrubber: React.FC<WaveformScrubberProps> = ({
         style={{
           position: 'relative',
           flex: 1,
-          height: '24px',
+          height: '20px',
           display: 'flex',
           alignItems: 'center',
           cursor: 'pointer',
@@ -90,7 +91,7 @@ export const WaveformScrubber: React.FC<WaveformScrubberProps> = ({
             position: 'absolute',
             left: 0,
             right: 0,
-            height: '4px',
+            height: '3px',
             backgroundColor: 'rgba(255, 255, 255, 0.1)',
             borderRadius: 'var(--radius-full)',
             overflow: 'hidden',
@@ -104,7 +105,7 @@ export const WaveformScrubber: React.FC<WaveformScrubberProps> = ({
               top: 0,
               bottom: 0,
               width: `${bufferedPct}%`,
-              backgroundColor: 'rgba(6, 182, 212, 0.45)',
+              backgroundColor: 'rgba(255, 255, 255, 0.22)',
               transition: 'width 0.2s ease',
             }}
           />
@@ -117,8 +118,7 @@ export const WaveformScrubber: React.FC<WaveformScrubberProps> = ({
               top: 0,
               bottom: 0,
               width: `${currentPct}%`,
-              backgroundColor: 'var(--accent-emerald)',
-              boxShadow: '0 0 8px rgba(16, 185, 129, 0.6)',
+              backgroundColor: 'var(--accent-primary, #f97316)',
             }}
           />
         </div>
@@ -128,11 +128,11 @@ export const WaveformScrubber: React.FC<WaveformScrubberProps> = ({
           style={{
             position: 'absolute',
             left: `${currentPct}%`,
-            width: '12px',
-            height: '12px',
+            width: '10px',
+            height: '10px',
             borderRadius: 'var(--radius-full)',
-            backgroundColor: '#fff',
-            boxShadow: '0 0 8px rgba(0, 0, 0, 0.5), 0 0 12px var(--accent-emerald)',
+            backgroundColor: '#ffffff',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.5)',
             transform: 'translateX(-50%)',
             transition: isDragging ? 'none' : 'transform 0.1s ease',
             pointerEvents: 'none',
@@ -143,9 +143,10 @@ export const WaveformScrubber: React.FC<WaveformScrubberProps> = ({
       <span
         style={{
           fontFamily: 'var(--font-mono)',
-          fontSize: '0.75rem',
+          fontSize: '0.72rem',
           color: 'var(--text-muted)',
-          minWidth: '36px',
+          minWidth: '34px',
+          userSelect: 'none',
         }}
       >
         {formatTime(duration)}

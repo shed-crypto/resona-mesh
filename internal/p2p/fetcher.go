@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,14 +35,16 @@ type Fetcher struct {
 	catalog      CatalogRecorder
 	quotaManager *storage.QuotaManager
 	blockChecker BlockChecker
+	reputation   *PeerReputationTracker
 }
 
-// NewFetcher creates a new swarm block fetcher.
+// NewFetcher creates a new swarm block fetcher with a default reputation tracker.
 func NewFetcher(h *Host, bs *storage.BlockStore, cat CatalogRecorder) *Fetcher {
 	return &Fetcher{
 		host:       h,
 		blockStore: bs,
 		catalog:    cat,
+		reputation: NewPeerReputationTracker(),
 	}
 }
 
@@ -53,6 +56,16 @@ func (f *Fetcher) SetQuotaManager(qm *storage.QuotaManager) {
 // SetBlockChecker binds a moderation policy checker to guard against fetching blocked content.
 func (f *Fetcher) SetBlockChecker(bc BlockChecker) {
 	f.blockChecker = bc
+}
+
+// SetReputationTracker binds a custom peer reputation tracker.
+func (f *Fetcher) SetReputationTracker(rt *PeerReputationTracker) {
+	f.reputation = rt
+}
+
+// ReputationTracker returns the peer reputation tracker bound to this fetcher.
+func (f *Fetcher) ReputationTracker() *PeerReputationTracker {
+	return f.reputation
 }
 
 // FetchBlock retrieves an audio block by its hash. It first checks the local block store;
@@ -101,17 +114,32 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 		default:
 		}
 
+		startTime := time.Now()
 		peerCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		data, err := RequestBlock(peerCtx, f.host, peerID, req)
+		elapsed := time.Since(startTime)
 		cancel()
 
 		if err != nil {
+			if f.reputation != nil {
+				if errors.Is(err, ErrBlockHashMismatch) {
+					f.reputation.RecordFailure(peerID, FailureHashMismatch)
+				} else if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "deadline") || strings.Contains(err.Error(), "timeout") {
+					f.reputation.RecordFailure(peerID, FailureTimeout)
+				} else {
+					f.reputation.RecordFailure(peerID, FailureStreamError)
+				}
+			}
 			slog.Warn("Swarm peer failed to supply block",
 				"peer_id", peerID.String(),
 				"hash", blockHash,
 				"err", err,
 			)
 			continue
+		}
+
+		if f.reputation != nil {
+			f.reputation.RecordSuccess(peerID, elapsed, len(data))
 		}
 
 		// 4. Reserve disk space and persist to local blockstore
@@ -180,17 +208,37 @@ func (f *Fetcher) FetchBlock(ctx context.Context, contentID string, blockIndex i
 
 // prioritizedSwarmPeers orders connected peers so that direct non-WebSocket P2P peers are queried first,
 // followed by circuit-relayed peers, and WebSocket-only bootstrap relays last.
+// Quarantined peers are excluded, and candidates within each connection tier are sorted by reputation score.
 func (f *Fetcher) prioritizedSwarmPeers() []peer.ID {
+	if f.host == nil {
+		return nil
+	}
+
 	all := f.host.ConnectedPeers()
-	if len(all) <= 1 {
-		return all
+	if len(all) == 0 {
+		return nil
+	}
+
+	// 1. Filter out quarantined peers
+	now := time.Now()
+	var candidates []peer.ID
+	for _, pid := range all {
+		if f.reputation != nil && f.reputation.IsQuarantined(pid, now) {
+			slog.Debug("Filtering out quarantined swarm peer from block fetch candidates", "peer_id", pid.String())
+			continue
+		}
+		candidates = append(candidates, pid)
+	}
+
+	if len(candidates) <= 1 {
+		return candidates
 	}
 
 	var directP2P []peer.ID
 	var relayedP2P []peer.ID
 	var wsRelays []peer.ID
 
-	for _, pid := range all {
+	for _, pid := range candidates {
 		isDirect := false
 		isWSOnly := true
 		conns := f.host.Network().ConnsToPeer(pid)
@@ -214,7 +262,21 @@ func (f *Fetcher) prioritizedSwarmPeers() []peer.ID {
 		}
 	}
 
-	ordered := make([]peer.ID, 0, len(all))
+	// Sort peers within each tier descending by reputation score
+	sortPeersByReputation := func(peers []peer.ID) {
+		if f.reputation == nil || len(peers) <= 1 {
+			return
+		}
+		sort.SliceStable(peers, func(i, j int) bool {
+			return f.reputation.Score(peers[i]) > f.reputation.Score(peers[j])
+		})
+	}
+
+	sortPeersByReputation(directP2P)
+	sortPeersByReputation(relayedP2P)
+	sortPeersByReputation(wsRelays)
+
+	ordered := make([]peer.ID, 0, len(candidates))
 	ordered = append(ordered, directP2P...)
 	ordered = append(ordered, relayedP2P...)
 	ordered = append(ordered, wsRelays...)

@@ -1,5 +1,46 @@
-import type { Track, Manifest, TrackListResponse, Report, Decision, BlockedItem } from '../../types/track';
+import type { Track, Manifest, TrackRecommendation, TrackListResponse, Report, Decision, BlockedItem } from '../../types/track';
 import type { NodeStatus, PeerRecord, StorageUsage, NodeSettings } from '../../types/node';
+
+export interface ModeratorCertificate {
+  schema_version: string;
+  network_id: string;
+  action: 'APPROVE_MODERATOR' | 'REVOKE_MODERATOR';
+  moderator_pubkey: string;
+  alias: string;
+  issued_at: number;
+  expires_at: number;
+  admin_pubkey: string;
+  signature: string;
+}
+
+
+
+export interface UpdateState {
+  status: 'idle' | 'available' | 'downloading' | 'ready_to_restart' | 'error';
+  current_version: string;
+  available_release?: {
+    version: string;
+    target_os: string;
+    target_arch: string;
+    total_size_bytes: number;
+    release_notes?: string;
+    published_at: number;
+  };
+  progress_pct: number;
+  downloaded_blocks: number;
+  total_blocks: number;
+  error_message?: string;
+}
+export interface EncryptedKeyBundle {
+  version: number;
+  kdf: string;
+  iterations: number;
+  salt: string;
+  nonce: string;
+  ciphertext: string;
+  public_key: string;
+  created_at: number;
+}
 
 const API_BASE = '/api/v1';
 
@@ -57,6 +98,42 @@ export const apiClient = {
     });
     if (!res.ok) {
       throw new Error(`Failed to delete track: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async getRecommendations(id: string, limit: number = 10): Promise<{ content_id: string; recommendations: TrackRecommendation[] }> {
+    const res = await fetch(`${API_BASE}/tracks/${id}/recommendations?limit=${limit}`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch recommendations: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async updateTrackMetadata(id: string, metadata: { genre?: string; tags?: string[]; bpm?: number; mood?: string }): Promise<{ status: string; track: Track }> {
+    const res = await fetch(`${API_BASE}/tracks/${id}/metadata`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(metadata),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to update metadata: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async updateTrackLyrics(id: string, lyrics: string): Promise<{ status: string; content_id: string; lyrics: string }> {
+    const res = await fetch(`${API_BASE}/tracks/${id}/lyrics`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ lyrics }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to update lyrics: ${res.statusText}`);
     }
     return res.json();
   },
@@ -203,8 +280,121 @@ export const apiClient = {
     return res.json();
   },
 
+  async getModerators(): Promise<{ items: ModeratorCertificate[]; total: number }> {
+    const res = await fetch(`${API_BASE}/moderation/moderators`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch moderators: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async delegateModerator(params: {
+    action: 'APPROVE_MODERATOR' | 'REVOKE_MODERATOR';
+    moderator_pubkey: string;
+    alias?: string;
+    duration_sec?: number;
+  }): Promise<ModeratorCertificate> {
+    const res = await fetch(`${API_BASE}/moderation/moderators`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to update moderator status');
+    }
+    return res.json();
+  },
+
+  async exportIdentity(passphrase: string): Promise<EncryptedKeyBundle> {
+    const res = await fetch(`${API_BASE}/identity/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passphrase }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to export identity');
+    }
+    return res.json();
+  },
+
+  async importIdentity(bundle: EncryptedKeyBundle, passphrase: string): Promise<{ status: string; restart_required: boolean; public_key: string }> {
+    const res = await fetch(`${API_BASE}/identity/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bundle, passphrase }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to import identity');
+    }
+    return res.json();
+  },
+
+  async applyKeyRotation(event: any): Promise<{ status: string; event_id: string }> {
+    const res = await fetch(`${API_BASE}/moderation/key-rotations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to apply key rotation');
+    }
+    return res.json();
+  },
+
+
+  async getUpdaterStatus(): Promise<UpdateState> {
+    const res = await fetch(`${API_BASE}/updater/status`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch updater status: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async checkUpdate(): Promise<UpdateState> {
+    const res = await fetch(`${API_BASE}/updater/check`, { method: 'POST' });
+    if (!res.ok) {
+      throw new Error(`Failed to check for updates: ${res.statusText}`);
+    }
+    return res.json();
+  },
+
+  async downloadUpdate(): Promise<UpdateState> {
+    const res = await fetch(`${API_BASE}/updater/download`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to start update download');
+    }
+    return res.json();
+  },
+
+  async applyUpdate(): Promise<{ status: string; restart_required: boolean; message: string }> {
+    const res = await fetch(`${API_BASE}/updater/apply`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to apply update');
+    }
+    return res.json();
+  },
+
+  async rollbackUpdate(): Promise<{ status: string; restart_required: boolean; message: string }> {
+    const res = await fetch(`${API_BASE}/updater/rollback`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || 'Failed to rollback update');
+    }
+    return res.json();
+  },
+
   getStreamUrl(id: string): string {
     return `${API_BASE}/stream/${id}`;
+  },
+
+  getDownloadUrl(id: string): string {
+    return `${API_BASE}/tracks/${id}/download`;
   },
 
   getCoverUrl(id: string): string {

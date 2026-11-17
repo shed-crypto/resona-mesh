@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 // CanonicalReportPayload produces a deterministic string representation of a report for signing.
@@ -61,4 +62,56 @@ func CanonicalReceiptPayload(rc *ReceiptEvent) string {
 		rc.ModeratorKeyHex,
 		rc.ReceivedAt,
 	)
+}
+
+// CanonicalModeratorCertPayload produces a deterministic string representation of a moderator certificate.
+func CanonicalModeratorCertPayload(c *ModeratorCertificate) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%d|%d|%s",
+		c.NetworkID,
+		c.Action,
+		strings.ToLower(c.ModeratorPubKey),
+		c.Alias,
+		c.IssuedAt,
+		c.ExpiresAt,
+		strings.ToLower(c.RootAdminPubKey),
+	)
+}
+
+// CanonicalKeyRotationPayload produces a deterministic string representation of a key rotation event.
+func CanonicalKeyRotationPayload(r *KeyRotationEvent) string {
+	return fmt.Sprintf("%s|%s|%d|%s|%s|%s|%s|%d",
+		r.NetworkID,
+		r.KeyRole,
+		r.NewPolicyEpoch,
+		strings.ToLower(r.OldPubKey),
+		strings.ToLower(r.NewPubKey),
+		strings.ToLower(r.RecoveryPubKey),
+		r.Reason,
+		r.IssuedAt,
+	)
+}
+
+
+// CanonicalReleasePayload produces a deterministic string representation of a release manifest for signing.
+func CanonicalReleasePayload(r *ReleaseManifest) string {
+	hashes := strings.Join(r.BlockHashes, ",")
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%d|%d|%s|%s|%d|%s",
+		r.SchemaVersion,
+		r.Version,
+		r.TargetOS,
+		r.TargetArch,
+		strings.ToLower(r.BinaryHash),
+		r.TotalSizeBytes,
+		r.BlockSize,
+		hashes,
+		strings.ToLower(r.ReleasePubKey),
+		r.PublishedAt,
+		r.ReleaseNotes,
+	)
+}
+
+// ReleaseManifestID computes the SHA-256 identifier of a canonical release payload.
+func ReleaseManifestID(r *ReleaseManifest) string {
+	sum := sha256.Sum256([]byte(CanonicalReleasePayload(r)))
+	return hex.EncodeToString(sum[:])
 }

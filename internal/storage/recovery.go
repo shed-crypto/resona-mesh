@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"resonamesh/pkg/crypto"
+	"resonamesh/pkg/protocol"
 )
 
 // RecoveryReport summarizes the outcome of a storage reconciliation pass.
@@ -90,7 +92,26 @@ func Recover(ctx context.Context, dataDir string, db *DB, bs *BlockStore) (*Reco
 		}
 	}
 
-	// 3. Reconcile Disk -> DB: purge orphan or corrupted chunk files
+	// 3. Collect release manifest blocks so updater blocks are never treated as orphans
+	protectedReleaseBlocks := make(map[string]bool)
+	updatesDir := filepath.Join(dataDir, "updates")
+	if entries, readDirErr := os.ReadDir(updatesDir); readDirErr == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".json") {
+				manifestPath := filepath.Join(updatesDir, e.Name())
+				if data, readFileErr := os.ReadFile(manifestPath); readFileErr == nil {
+					var rel protocol.ReleaseManifest
+					if unmarshalErr := json.Unmarshal(data, &rel); unmarshalErr == nil {
+						for _, h := range rel.BlockHashes {
+							protectedReleaseBlocks[strings.ToLower(strings.TrimSpace(h))] = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 4. Reconcile Disk -> DB: purge orphan or corrupted chunk files
 	err = filepath.WalkDir(blocksDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
@@ -106,6 +127,17 @@ func Recover(ctx context.Context, dataDir string, db *DB, bs *BlockStore) (*Reco
 
 		// Valid chunk filenames are exactly 64 hex characters
 		if len(hash) != 64 {
+			return nil
+		}
+
+		normalizedHash := strings.ToLower(hash)
+		if protectedReleaseBlocks[normalizedHash] {
+			// Chunk belongs to an authentic application release manifest; verify cryptographic integrity
+			data, readErr := os.ReadFile(path)
+			if readErr != nil || !crypto.VerifyChunk(data, normalizedHash) {
+				_ = os.Remove(path)
+				report.CorruptedBlocksPurged++
+			}
 			return nil
 		}
 

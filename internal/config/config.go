@@ -15,9 +15,17 @@ import (
 )
 
 var (
-	ErrInsecureHTTPBind = errors.New("config: HTTP address must bind to loopback (127.0.0.1) for security")
-	ErrInvalidP2PPort   = errors.New("config: P2P port must be between 1 and 65535")
-	ErrInvalidQuota     = errors.New("config: storage quota must be greater than zero")
+	ErrInsecureHTTPBind  = errors.New("config: HTTP address must bind to loopback (127.0.0.1) for security")
+	ErrInvalidP2PPort    = errors.New("config: P2P port must be between 1 and 65535")
+	ErrInvalidQuota      = errors.New("config: storage quota must be greater than zero")
+	ErrInvalidRelayMode  = errors.New("config: relay mode must be 'pex-only', 'coordinator', or 'transit'")
+	ErrInvalidPeerBounds = errors.New("config: max swarm peers must be greater than or equal to min swarm peers")
+)
+
+const (
+	RelayModePEXOnly     = "pex-only"
+	RelayModeCoordinator = "coordinator"
+	RelayModeTransit     = "transit"
 )
 
 type Config struct {
@@ -27,16 +35,33 @@ type Config struct {
 	StorageQuotaBytes      int64
 	KeeperEnabled          bool
 	TrustedModeratorPubKey string
+	ReleasePubKey          string
 	LogLevel               string
 	NATPortMapEnabled      bool
 	BootstrapSeeds         []string
+	STUNServers            []string
 	AllowInsecureHTTP      bool
 	Headless               bool
 	DisableRelay           bool
+	RelayMode              string
+	RelayMaxReservations   int
+	RelayMaxCircuits       int
+	RelayDataLimitBytes    int64
+	RelayDurationSec       int
+	MinSwarmPeers          int
+	MaxSwarmPeers          int
 }
 
 // DefaultBootstrapSeeds defines fallback bootstrap seed endpoints if none are configured.
 var DefaultBootstrapSeeds []string
+
+// DefaultSTUNServers defines fallback public STUN resolvers if none are configured.
+var DefaultSTUNServers = []string{
+	"stun.l.google.com:19302",
+	"stun.cloudflare.com:3478",
+	"stun1.l.google.com:19302",
+	"stun2.l.google.com:19302",
+}
 
 // DefaultConfig returns safe, preconfigured embedded fallback settings.
 func DefaultConfig() *Config {
@@ -47,12 +72,21 @@ func DefaultConfig() *Config {
 		StorageQuotaBytes:      5 * 1024 * 1024 * 1024, // 5 GiB
 		KeeperEnabled:          false,
 		TrustedModeratorPubKey: "",
+		ReleasePubKey:          "",
 		LogLevel:               "INFO",
 		NATPortMapEnabled:      true,
 		BootstrapSeeds:         append([]string(nil), DefaultBootstrapSeeds...),
+		STUNServers:            append([]string(nil), DefaultSTUNServers...),
 		AllowInsecureHTTP:      false,
 		Headless:               false,
 		DisableRelay:           false,
+		RelayMode:              RelayModeCoordinator,
+		RelayMaxReservations:   16,
+		RelayMaxCircuits:       4,
+		RelayDataLimitBytes:    256 * 1024, // 256 KiB signaling limit for coordinator mode
+		RelayDurationSec:       120,        // 2 minutes
+		MinSwarmPeers:          3,
+		MaxSwarmPeers:          32,
 	}
 }
 
@@ -99,6 +133,9 @@ func Load(envPath string, args []string) (*Config, error) {
 	if val := os.Getenv("RESONAMESH_TRUSTED_MODERATOR_PUBKEY"); val != "" {
 		cfg.TrustedModeratorPubKey = val
 	}
+	if val := os.Getenv("RESONAMESH_RELEASE_PUBKEY"); val != "" {
+		cfg.ReleasePubKey = val
+	}
 	if val := os.Getenv("RESONAMESH_LOG_LEVEL"); val != "" {
 		cfg.LogLevel = strings.ToUpper(val)
 	}
@@ -110,6 +147,11 @@ func Load(envPath string, args []string) (*Config, error) {
 	} else if val := os.Getenv("RESONAMESH_BOOTSTRAP_PEERS"); val != "" {
 		cfg.BootstrapSeeds = parseSeedsString(val)
 	}
+	if val := os.Getenv("RESONAMESH_STUN_SERVERS"); val != "" {
+		cfg.STUNServers = parseSeedsString(val)
+	} else if val := os.Getenv("STUN_SERVERS"); val != "" {
+		cfg.STUNServers = parseSeedsString(val)
+	}
 	if val := os.Getenv("RESONAMESH_ALLOW_INSECURE_HTTP"); val != "" {
 		cfg.AllowInsecureHTTP = strings.EqualFold(val, "true") || val == "1"
 	}
@@ -118,6 +160,39 @@ func Load(envPath string, args []string) (*Config, error) {
 	}
 	if val := os.Getenv("RESONAMESH_DISABLE_RELAY"); val != "" {
 		cfg.DisableRelay = strings.EqualFold(val, "true") || val == "1"
+	}
+	if val := os.Getenv("RESONAMESH_RELAY_MODE"); val != "" {
+		cfg.RelayMode = strings.ToLower(strings.TrimSpace(val))
+	}
+	if val := os.Getenv("RESONAMESH_RELAY_MAX_RESERVATIONS"); val != "" {
+		if r, err := strconv.Atoi(val); err == nil {
+			cfg.RelayMaxReservations = r
+		}
+	}
+	if val := os.Getenv("RESONAMESH_RELAY_MAX_CIRCUITS"); val != "" {
+		if c, err := strconv.Atoi(val); err == nil {
+			cfg.RelayMaxCircuits = c
+		}
+	}
+	if val := os.Getenv("RESONAMESH_RELAY_DATA_LIMIT_BYTES"); val != "" {
+		if d, err := strconv.ParseInt(val, 10, 64); err == nil {
+			cfg.RelayDataLimitBytes = d
+		}
+	}
+	if val := os.Getenv("RESONAMESH_RELAY_DURATION_SEC"); val != "" {
+		if s, err := strconv.Atoi(val); err == nil {
+			cfg.RelayDurationSec = s
+		}
+	}
+	if val := os.Getenv("RESONAMESH_MIN_SWARM_PEERS"); val != "" {
+		if m, err := strconv.Atoi(val); err == nil {
+			cfg.MinSwarmPeers = m
+		}
+	}
+	if val := os.Getenv("RESONAMESH_MAX_SWARM_PEERS"); val != "" {
+		if m, err := strconv.Atoi(val); err == nil {
+			cfg.MaxSwarmPeers = m
+		}
 	}
 
 	// 4. Override with CLI Flags if provided
@@ -130,9 +205,19 @@ func Load(envPath string, args []string) (*Config, error) {
 		flagKeeper := fs.Bool("keeper", false, "Enable automatic background replication")
 		flagNATPortMap := fs.Bool("nat-port-map", cfg.NATPortMapEnabled, "Enable automatic router port mapping via UPnP / NAT-PMP")
 		flagBootstrap := fs.String("bootstrap", "", "Comma-separated bootstrap multiaddrs or HTTP(S) endpoint URLs")
+		flagSTUN := fs.String("stun-servers", "", "Comma-separated STUN resolver server endpoints (host:port)")
+		flagModerator := fs.String("moderator-key", "", "Trusted moderator/admin Ed25519 public key in hex")
+		flagReleaseKey := fs.String("release-pubkey", "", "Trusted release authority Ed25519 public key in hex")
 		flagInsecureHTTP := fs.Bool("allow-insecure-http", cfg.AllowInsecureHTTP, "Allow HTTP server to bind to non-loopback addresses (container/server environments)")
 		flagHeadless := fs.Bool("headless", cfg.Headless, "Run in headless relay mode with interactive player mutations disabled")
 		flagDisableRelay := fs.Bool("disable-relay", cfg.DisableRelay, "Disable Circuit Relay fallback, requiring direct P2P connections only")
+		flagRelayMode := fs.String("relay-mode", "", "Relay contribution mode: pex-only, coordinator, or transit")
+		flagRelayMaxRes := fs.Int("relay-max-reservations", 0, "Maximum concurrent relay reservations (slots)")
+		flagRelayMaxCirc := fs.Int("relay-max-circuits", 0, "Maximum concurrent relay circuits per peer")
+		flagRelayDataLimit := fs.Int64("relay-data-limit", 0, "Circuit data transfer limit in bytes (0 for unlimited)")
+		flagRelayDuration := fs.Int("relay-duration", 0, "Circuit duration limit in seconds")
+		flagMinSwarmPeers := fs.Int("min-swarm-peers", 0, "Threshold of connected swarm peers before bootstrap becomes dormant")
+		flagMaxSwarmPeers := fs.Int("max-swarm-peers", 0, "Maximum active P2P swarm peer connections")
 
 		if err := fs.Parse(args); err != nil {
 			return nil, err
@@ -156,6 +241,37 @@ func Load(envPath string, args []string) (*Config, error) {
 		if *flagBootstrap != "" {
 			cfg.BootstrapSeeds = parseSeedsString(*flagBootstrap)
 		}
+		if *flagSTUN != "" {
+			cfg.STUNServers = parseSeedsString(*flagSTUN)
+		}
+		if *flagModerator != "" {
+			cfg.TrustedModeratorPubKey = *flagModerator
+		}
+		if *flagReleaseKey != "" {
+			cfg.ReleasePubKey = *flagReleaseKey
+		}
+		if *flagRelayMode != "" {
+			cfg.RelayMode = strings.ToLower(strings.TrimSpace(*flagRelayMode))
+		}
+		if *flagRelayMaxRes > 0 {
+			cfg.RelayMaxReservations = *flagRelayMaxRes
+		}
+		if *flagRelayMaxCirc > 0 {
+			cfg.RelayMaxCircuits = *flagRelayMaxCirc
+		}
+		if *flagRelayDataLimit != 0 {
+			cfg.RelayDataLimitBytes = *flagRelayDataLimit
+		}
+		if *flagRelayDuration > 0 {
+			cfg.RelayDurationSec = *flagRelayDuration
+		}
+		if *flagMinSwarmPeers > 0 {
+			cfg.MinSwarmPeers = *flagMinSwarmPeers
+		}
+		if *flagMaxSwarmPeers > 0 {
+			cfg.MaxSwarmPeers = *flagMaxSwarmPeers
+		}
+
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {
 			case "nat-port-map":
@@ -199,6 +315,19 @@ func (c *Config) Validate() error {
 
 	if c.StorageQuotaBytes <= 0 {
 		return ErrInvalidQuota
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(c.RelayMode))
+	if mode != RelayModePEXOnly && mode != RelayModeCoordinator && mode != RelayModeTransit {
+		return ErrInvalidRelayMode
+	}
+	c.RelayMode = mode
+
+	if c.MinSwarmPeers < 1 {
+		c.MinSwarmPeers = 1
+	}
+	if c.MaxSwarmPeers < c.MinSwarmPeers {
+		return ErrInvalidPeerBounds
 	}
 
 	return nil
@@ -261,4 +390,3 @@ func parseSeedsString(raw string) []string {
 	}
 	return result
 }
-

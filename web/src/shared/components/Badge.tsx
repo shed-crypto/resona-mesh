@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type BadgeVariant = 'emerald' | 'cyan' | 'amber' | 'rose' | 'neutral';
+export type BadgeVariant = 'emerald' | 'cyan' | 'amber' | 'rose' | 'neutral' | 'primary';
 
 interface BadgeProps {
   children: React.ReactNode;
@@ -9,30 +9,35 @@ interface BadgeProps {
 }
 
 const variantStyles: Record<BadgeVariant, { bg: string; color: string; border: string }> = {
+  primary: {
+    bg: 'rgba(249, 115, 22, 0.12)',
+    color: '#f97316',
+    border: '1px solid rgba(249, 115, 22, 0.25)',
+  },
   emerald: {
-    bg: 'rgba(16, 185, 129, 0.12)',
-    color: '#10b981',
-    border: '1px solid rgba(16, 185, 129, 0.3)',
+    bg: 'rgba(34, 197, 94, 0.12)',
+    color: '#22c55e',
+    border: '1px solid rgba(34, 197, 94, 0.25)',
   },
   cyan: {
-    bg: 'rgba(6, 182, 212, 0.12)',
-    color: '#06b6d4',
-    border: '1px solid rgba(6, 182, 212, 0.3)',
+    bg: 'rgba(56, 189, 248, 0.12)',
+    color: '#38bdf8',
+    border: '1px solid rgba(56, 189, 248, 0.25)',
   },
   amber: {
     bg: 'rgba(245, 158, 11, 0.12)',
     color: '#f59e0b',
-    border: '1px solid rgba(245, 158, 11, 0.3)',
+    border: '1px solid rgba(245, 158, 11, 0.25)',
   },
   rose: {
     bg: 'rgba(244, 63, 94, 0.12)',
     color: '#f43f5e',
-    border: '1px solid rgba(244, 63, 94, 0.3)',
+    border: '1px solid rgba(244, 63, 94, 0.25)',
   },
   neutral: {
     bg: 'rgba(255, 255, 255, 0.05)',
-    color: '#9ca3af',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
+    color: '#a1a1aa',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
   },
 };
 

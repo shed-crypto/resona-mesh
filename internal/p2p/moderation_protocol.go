@@ -38,10 +38,12 @@ type ModerationWireRequest struct {
 }
 
 type ModerationWireResponse struct {
-	Status    byte                      `json:"status"` // 0x00 OK, 0x01 Error
-	Receipt   *protocol.ReceiptEvent    `json:"receipt,omitempty"`
-	Decisions []*protocol.DecisionEvent `json:"decisions,omitempty"`
-	Error     string                    `json:"error,omitempty"`
+	Status       byte                            `json:"status"` // 0x00 OK, 0x01 Error
+	Receipt      *protocol.ReceiptEvent          `json:"receipt,omitempty"`
+	Decisions    []*protocol.DecisionEvent       `json:"decisions,omitempty"`
+	Certificates []protocol.ModeratorCertificate `json:"certificates,omitempty"`
+	KeyRotations []protocol.KeyRotationEvent     `json:"key_rotations,omitempty"`
+	Error        string                          `json:"error,omitempty"`
 }
 
 // ModerationHandler handles incoming streams for /resonamesh/moderation/1.0.0
@@ -164,8 +166,13 @@ func (mh *ModerationHandler) handleStream(s network.Stream) {
 				filtered = append(filtered, decEvent)
 			}
 		}
+		certs, _ := mh.engine.ListModeratorCertificates(ctx)
+		rotations, _ := mh.engine.ListKeyRotations(ctx)
+
 		resp.Status = 0x00
 		resp.Decisions = filtered
+		resp.Certificates = certs
+		resp.KeyRotations = rotations
 
 	default:
 		_ = mh.writeError(s, "unknown action")
@@ -243,7 +250,7 @@ func (mh *ModerationHandler) SendReport(ctx context.Context, peerID peer.ID, rep
 }
 
 // SyncDecisions pulls newer decisions from a remote peer starting from sinceSeq.
-func (mh *ModerationHandler) SyncDecisions(ctx context.Context, peerID peer.ID, sinceSeq uint64) ([]*protocol.DecisionEvent, error) {
+func (mh *ModerationHandler) SyncDecisions(ctx context.Context, peerID peer.ID, sinceSeq uint64) (*ModerationWireResponse, error) {
 	s, err := mh.host.NewControlStream(ctx, peerID, protocol.ProtocolModeration)
 	if err != nil {
 		return nil, fmt.Errorf("p2p: failed to open moderation stream to %s: %w", peerID, err)
@@ -287,7 +294,7 @@ func (mh *ModerationHandler) SyncDecisions(ctx context.Context, peerID peer.ID, 
 		return nil, fmt.Errorf("p2p: peer reported decision sync error: %s", resp.Error)
 	}
 
-	return resp.Decisions, nil
+	return &resp, nil
 }
 
 // SyncCycle runs an iteration of pushing pending reports and fetching decisions across connected peers.
@@ -341,9 +348,15 @@ func (mh *ModerationHandler) SyncCycle(ctx context.Context) error {
 	}
 
 	for _, p := range peers {
-		remoteDecisions, syncErr := mh.SyncDecisions(ctx, p, maxSeq)
-		if syncErr == nil && len(remoteDecisions) > 0 {
-			for _, rd := range remoteDecisions {
+		syncResp, syncErr := mh.SyncDecisions(ctx, p, maxSeq)
+		if syncErr == nil && syncResp != nil {
+			for _, kr := range syncResp.KeyRotations {
+				_ = mh.engine.ApplyKeyRotation(ctx, &kr)
+			}
+			for _, cert := range syncResp.Certificates {
+				_ = mh.engine.StoreModeratorCertificate(ctx, &cert)
+			}
+			for _, rd := range syncResp.Decisions {
 				_ = mh.engine.ApplyDecision(ctx, rd)
 			}
 		}

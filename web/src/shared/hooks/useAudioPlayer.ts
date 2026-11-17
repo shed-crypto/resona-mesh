@@ -14,12 +14,22 @@ export function useAudioPlayer() {
   const [bufferedPct, setBufferedPct] = useState(0);
   const [volume, setVolume] = useState(0.85);
   const [isMuted, setIsMuted] = useState(false);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
 
   // Playback Queue & Controls
   const [queue, setQueue] = useState<Track[]>([]);
   const [queueIndex, setQueueIndex] = useState<number>(-1);
   const [isShuffle, setIsShuffle] = useState(false);
   const [isRepeat, setIsRepeat] = useState(false);
+  const [isRadio, setIsRadio] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('resonamesh_radio_active') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [playbackRate, setPlaybackRateState] = useState<number>(1.0);
+  const playbackRateRef = useRef<number>(1.0);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -36,6 +46,9 @@ export function useAudioPlayer() {
   const isRepeatRef = useRef<boolean>(isRepeat);
   isRepeatRef.current = isRepeat;
 
+  const isRadioRef = useRef<boolean>(isRadio);
+  isRadioRef.current = isRadio;
+
   const currentTrackRef = useRef<Track | null>(currentTrack);
   currentTrackRef.current = currentTrack;
 
@@ -44,6 +57,7 @@ export function useAudioPlayer() {
     const audio = new Audio();
     audio.preload = 'auto';
     audioRef.current = audio;
+    setAudioElement(audio);
 
     const onPlay = () => setPlayerState('playing');
     const onPause = () => setPlayerState('paused');
@@ -96,6 +110,25 @@ export function useAudioPlayer() {
           playTrackInternal(q[nextIdx], q, nextIdx);
           return;
         }
+      }
+
+      if (isRadioRef.current && currentTrackRef.current) {
+        apiClient.getRecommendations(currentTrackRef.current.content_id, 10).then(({ recommendations }) => {
+          if (recommendations && recommendations.length > 0) {
+            const existingIds = new Set(q.map((t) => t.content_id));
+            const nextRec = recommendations.find((r) => !existingIds.has(r.track.content_id));
+            const candidate = nextRec ? nextRec.track : recommendations[0].track;
+            const updatedQueue = [...q, candidate];
+            playTrackInternal(candidate, updatedQueue, updatedQueue.length - 1);
+            return;
+          }
+          setPlayerState('paused');
+          setCurrentTime(0);
+        }).catch(() => {
+          setPlayerState('paused');
+          setCurrentTime(0);
+        });
+        return;
       }
 
       setPlayerState('paused');
@@ -152,6 +185,8 @@ export function useAudioPlayer() {
     const streamUrl = apiClient.getStreamUrl(track.content_id);
     audio.src = streamUrl;
     audio.load();
+    audio.playbackRate = playbackRateRef.current;
+    audio.preservesPitch = true;
     recordLocalPlay(track.content_id, false);
 
     try {
@@ -232,6 +267,15 @@ export function useAudioPlayer() {
     }
   }, [currentTrack]);
 
+  const setPlaybackRate = useCallback((rate: number) => {
+    setPlaybackRateState(rate);
+    playbackRateRef.current = rate;
+    if (audioRef.current) {
+      audioRef.current.playbackRate = rate;
+      audioRef.current.preservesPitch = true;
+    }
+  }, []);
+
   const seek = useCallback((targetTimeSeconds: number) => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -275,6 +319,7 @@ export function useAudioPlayer() {
   }, [currentTrack, playNext, playPrevious]);
 
   return {
+    audioElement,
     currentTrack,
     playerState,
     currentTime,
@@ -287,12 +332,24 @@ export function useAudioPlayer() {
     playTrack,
     togglePlay,
     seek,
+    playbackRate,
+    setPlaybackRate,
     isPlaying: playerState === 'playing',
     // Queue & Controls
     queue,
     queueIndex,
     isShuffle,
     isRepeat,
+    isRadio,
+    toggleRadio: () => {
+      setIsRadio((prev) => {
+        const next = !prev;
+        try {
+          localStorage.setItem('resonamesh_radio_active', String(next));
+        } catch {}
+        return next;
+      });
+    },
     playNext,
     playPrevious,
     toggleShuffle,

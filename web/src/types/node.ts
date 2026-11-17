@@ -4,6 +4,15 @@ export interface PeerRecord {
   first_seen: string;
   last_seen: string;
   connected: boolean;
+  discovered_via?: string;
+  connection_type?: 'direct' | 'relayed' | 'known';
+  reputation_score?: number;
+  blocks_verified?: number;
+  hash_mismatches?: number;
+  stream_errors?: number;
+  avg_latency_ms?: number;
+  is_quarantined?: boolean;
+  quarantined_until?: string;
 }
 
 export interface NodeStatus {
@@ -37,4 +46,6 @@ export interface NodeSettings {
   keeper_enabled: boolean;
   p2p_port: number;
   http_addr: string;
+  publisher_key?: string;
+  wan_address?: string;
 }

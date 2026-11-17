@@ -3,6 +3,11 @@ export interface Track {
   title: string;
   artist: string;
   description: string;
+  lyrics?: string;
+  genre?: string;
+  tags?: string[];
+  bpm?: number;
+  mood?: string;
   duration_ms: number;
   bitrate_kbps: number;
   total_size_bytes: number;
@@ -25,6 +30,11 @@ export interface Manifest {
   content_id: string;
   title: string;
   artist: string;
+  lyrics?: string;
+  genre?: string;
+  tags?: string[];
+  bpm?: number;
+  mood?: string;
   duration_ms: number;
   bitrate_kbps: number;
   total_size_bytes: number;
@@ -87,3 +97,8 @@ export interface BlockedItem {
   blocked_at: number;
 }
 
+
+export interface TrackRecommendation {
+  track: Track;
+  score: number;
+}

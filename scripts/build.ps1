@@ -1,5 +1,7 @@
 # ResonaMesh Native Build Script for Windows PowerShell
 param (
+    [string]$Version = "0.1.0-alpha",
+    [string]$Output = "resonamesh.exe",
     [switch]$SkipFrontend = $false,
     [switch]$RunTests = $false,
     [switch]$RunAcceptance = $false
@@ -65,17 +67,41 @@ if (Test-Path "bootstrap.local.json") {
     }
 }
 
-$ldflags = "-s -w -X main.AppVersion=0.1.0-alpha -X main.AppName=ResonaMesh"
+$embeddedRecoveryPubKey = ""
+$embeddedReleasePubKey = ""
+if (Test-Path "trust.local.json") {
+    try {
+        $trustJson = Get-Content "trust.local.json" -Raw | ConvertFrom-Json
+        if ($trustJson.recovery_pubkey) {
+            $embeddedRecoveryPubKey = $trustJson.recovery_pubkey
+            Write-Host "Embedding Recovery Public Key from trust.local.json" -ForegroundColor Cyan
+        }
+        if ($trustJson.release_pubkey) {
+            $embeddedReleasePubKey = $trustJson.release_pubkey
+            Write-Host "Embedding Release Public Key from trust.local.json" -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Host "Warning: Could not parse trust.local.json, skipping trust key embedding." -ForegroundColor Yellow
+    }
+}
+
+$ldflags = "-s -w -X main.AppVersion=$Version -X resonamesh/internal/api.AppVersion=$Version -X main.AppName=ResonaMesh"
+if ($embeddedRecoveryPubKey -ne "") {
+    $ldflags += " -X main.RecoveryPubKey=$embeddedRecoveryPubKey"
+}
+if ($embeddedReleasePubKey -ne "") {
+    $ldflags += " -X main.ReleasePubKey=$embeddedReleasePubKey"
+}
 if ($embeddedSeeds -ne "") {
     $ldflags += " -X main.DefaultBootstrapSeeds=$embeddedSeeds"
 }
 
-go build -ldflags $ldflags -o resonamesh.exe ./cmd/resonamesh
+go build -ldflags $ldflags -o $Output ./cmd/resonamesh
 
-if (Test-Path "resonamesh.exe") {
-    $size = (Get-Item "resonamesh.exe").Length / 1MB
-    Write-Host "`nSUCCESS: resonamesh.exe generated ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
-    Write-Host "Run with: .\resonamesh.exe --http 127.0.0.1:8080 --p2p 4001" -ForegroundColor Cyan
+if (Test-Path $Output) {
+    $size = (Get-Item $Output).Length / 1MB
+    Write-Host "`nSUCCESS: $Output generated ($([math]::Round($size, 2)) MB) [Version: $Version]" -ForegroundColor Green
+    Write-Host "Run with: .\$Output --http 127.0.0.1:8080 --p2p 4001" -ForegroundColor Cyan
 } else {
-    Write-Error "Build failed: resonamesh.exe was not created."
+    Write-Error "Build failed: $Output was not created."
 }

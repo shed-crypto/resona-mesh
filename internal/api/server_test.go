@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,8 +24,12 @@ import (
 	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
+	"resonamesh/internal/updater"
 	"resonamesh/pkg/crypto"
 	"resonamesh/pkg/protocol"
+
+	"github.com/libp2p/go-libp2p/core/peer"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 )
 
 func setupTestServer(t *testing.T) (*httptest.Server, *catalog.Catalog, ed25519.PrivateKey) {
@@ -248,6 +253,27 @@ func TestAPITrackLifecycleAndStreaming(t *testing.T) {
 	}
 	if !bytes.Equal(streamedBytes, audioData[100:201]) {
 		t.Fatal("streamed range bytes do not match expected chunk data")
+	}
+
+	// 8b. Download full track file via GET /api/v1/tracks/{id}/download
+	dlResp, err := client.Get(fmt.Sprintf("%s/api/v1/tracks/%s/download", ts.URL, contentID))
+	if err != nil {
+		t.Fatalf("failed GET download: %v", err)
+	}
+	defer dlResp.Body.Close()
+	if dlResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for download, got %d", dlResp.StatusCode)
+	}
+	contentDisp := dlResp.Header.Get("Content-Disposition")
+	if !strings.Contains(contentDisp, "attachment") || !strings.Contains(contentDisp, "Resona Folk Swarm - Ой у лузі червона калина.mp3") {
+		t.Fatalf("unexpected Content-Disposition header: %s", contentDisp)
+	}
+	downloadedBytes, err := io.ReadAll(dlResp.Body)
+	if err != nil {
+		t.Fatalf("failed to read download response body: %v", err)
+	}
+	if !bytes.Equal(downloadedBytes, audioData) {
+		t.Fatalf("downloaded track bytes (len %d) do not match original audio data (len %d)", len(downloadedBytes), len(audioData))
 	}
 
 	// 9. CORS preflight OPTIONS request
@@ -860,6 +886,120 @@ func TestAPIModerationEndpoints(t *testing.T) {
 	}
 }
 
+func TestAPIGovernanceAndIdentityEndpoints(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+
+	// 1. Export identity key
+	expBody, _ := json.Marshal(map[string]string{
+		"passphrase": "super-secure-passphrase-123",
+	})
+	expResp, err := http.Post(ts.URL+"/api/v1/identity/export", "application/json", bytes.NewReader(expBody))
+	if err != nil {
+		t.Fatalf("failed to export identity: %v", err)
+	}
+	defer expResp.Body.Close()
+
+	if expResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for export, got %d", expResp.StatusCode)
+	}
+
+	var bundle crypto.EncryptedKeyBundle
+	if err := json.NewDecoder(expResp.Body).Decode(&bundle); err != nil {
+		t.Fatalf("failed to decode encrypted key bundle: %v", err)
+	}
+	if bundle.Ciphertext == "" || bundle.Salt == "" || bundle.Iterations != 600000 {
+		t.Fatalf("invalid encrypted bundle: %+v", bundle)
+	}
+
+	// 2. Import identity key with wrong passphrase -> should fail 400
+	badImpBody, _ := json.Marshal(map[string]interface{}{
+		"bundle":     bundle,
+		"passphrase": "wrong-passphrase-xyz",
+	})
+	badImpResp, err := http.Post(ts.URL+"/api/v1/identity/import", "application/json", bytes.NewReader(badImpBody))
+	if err != nil {
+		t.Fatalf("failed to post bad import: %v", err)
+	}
+	defer badImpResp.Body.Close()
+
+	if badImpResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for wrong passphrase, got %d", badImpResp.StatusCode)
+	}
+
+	// 3. Import identity key with correct passphrase -> should succeed 200
+	goodImpBody, _ := json.Marshal(map[string]interface{}{
+		"bundle":     bundle,
+		"passphrase": "super-secure-passphrase-123",
+	})
+	goodImpResp, err := http.Post(ts.URL+"/api/v1/identity/import", "application/json", bytes.NewReader(goodImpBody))
+	if err != nil {
+		t.Fatalf("failed to post good import: %v", err)
+	}
+	defer goodImpResp.Body.Close()
+
+	if goodImpResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for good import, got %d", goodImpResp.StatusCode)
+	}
+
+	var impResult map[string]interface{}
+	if err := json.NewDecoder(goodImpResp.Body).Decode(&impResult); err != nil {
+		t.Fatalf("failed to decode import result: %v", err)
+	}
+	if impResult["status"] != "imported" || impResult["restart_required"] != true {
+		t.Fatalf("unexpected import result: %+v", impResult)
+	}
+
+	// 4. Delegate a moderator
+	targetPub, _, _ := crypto.GenerateKeyPair()
+	targetPubHex := crypto.PublicKeyToHex(targetPub)
+
+	delBody, _ := json.Marshal(map[string]interface{}{
+		"action":           "APPROVE_MODERATOR",
+		"moderator_pubkey": targetPubHex,
+		"alias":            "Officer Alice",
+		"duration_sec":     86400,
+	})
+	delResp, err := http.Post(ts.URL+"/api/v1/moderation/moderators", "application/json", bytes.NewReader(delBody))
+	if err != nil {
+		t.Fatalf("failed to post delegate moderator: %v", err)
+	}
+	defer delResp.Body.Close()
+
+	if delResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created for moderator delegation, got %d", delResp.StatusCode)
+	}
+
+	var cert protocol.ModeratorCertificate
+	if err := json.NewDecoder(delResp.Body).Decode(&cert); err != nil {
+		t.Fatalf("failed to decode cert: %v", err)
+	}
+	if cert.ModeratorPubKey != targetPubHex || cert.Action != "APPROVE_MODERATOR" {
+		t.Fatalf("unexpected cert: %+v", cert)
+	}
+
+	// 5. List moderators
+	listResp, err := http.Get(ts.URL + "/api/v1/moderation/moderators")
+	if err != nil {
+		t.Fatalf("failed to get moderators: %v", err)
+	}
+	defer listResp.Body.Close()
+
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for list moderators, got %d", listResp.StatusCode)
+	}
+
+	var modList struct {
+		Items []protocol.ModeratorCertificate `json:"items"`
+		Total int                             `json:"total"`
+	}
+	if err := json.NewDecoder(listResp.Body).Decode(&modList); err != nil {
+		t.Fatalf("failed to decode moderator list: %v", err)
+	}
+	if modList.Total != 1 || len(modList.Items) != 1 || modList.Items[0].ModeratorPubKey != targetPubHex {
+		t.Fatalf("unexpected moderator list: %+v", modList)
+	}
+}
+
 func TestHeadlessRelayMode(t *testing.T) {
 	tempDir := t.TempDir()
 	db, err := storage.Open(filepath.Join(tempDir, "headless.db"))
@@ -941,7 +1081,24 @@ func TestHeadlessRelayMode(t *testing.T) {
 		t.Errorf("expected 403 Forbidden for settings update in headless mode, got %d", respSettings.StatusCode)
 	}
 
-	// 5. Verify GET /api/v1/node/status remains accessible
+	// 5. Verify identity export and import are blocked in headless mode
+	respExp, _ := http.Post(ts.URL+"/api/v1/identity/export", "application/json", strings.NewReader(`{"passphrase":"secret1234"}`))
+	if respExp != nil {
+		defer respExp.Body.Close()
+		if respExp.StatusCode != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for identity export in headless mode, got %d", respExp.StatusCode)
+		}
+	}
+
+	respImp, _ := http.Post(ts.URL+"/api/v1/identity/import", "application/json", strings.NewReader(`{"passphrase":"secret1234"}`))
+	if respImp != nil {
+		defer respImp.Body.Close()
+		if respImp.StatusCode != http.StatusForbidden {
+			t.Errorf("expected 403 Forbidden for identity import in headless mode, got %d", respImp.StatusCode)
+		}
+	}
+
+	// 6. Verify GET /api/v1/node/status remains accessible
 	respStatus, err := http.Get(ts.URL + "/api/v1/node/status")
 	if err != nil {
 		t.Fatal(err)
@@ -1031,7 +1188,561 @@ func TestTrackCoverUploadAndServe(t *testing.T) {
 	}
 }
 
+func TestAPITrackDownloadSanitizationAndNotFound(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+
+	// 1. Download non-existent track should return 404
+	missingResp, err := http.Get(ts.URL + "/api/v1/tracks/missing-id/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missingResp.Body.Close()
+	if missingResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing track download, got %d", missingResp.StatusCode)
+	}
+
+	// 2. Unit test filename sanitization edge cases
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"Normal Artist - Track.mp3", "Normal Artist - Track.mp3"},
+		{"AC/DC - Highway to Hell: Live?.mp3", "AC_DC - Highway to Hell_ Live_.mp3"},
+		{"Bad<chars>*here|\".mp3", "Bad_chars__here__.mp3"},
+		{"   ", "track.mp3"},
+		{".mp3", "track.mp3"},
+	}
+
+	for _, tc := range tests {
+		actual := api.SanitizeFilename(tc.input)
+		if actual != tc.expected {
+			t.Errorf("SanitizeFilename(%q) = %q; want %q", tc.input, actual, tc.expected)
+		}
+	}
+}
 
 
 
 
+
+
+
+func TestAPIUpdaterEndpoints(t *testing.T) {
+	server, tmpDir := createTestAPIServer(t)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	// 1. Without updater configured: returns idle status
+	resp, err := http.Get(ts.URL + "/api/v1/updater/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for updater status, got %d", resp.StatusCode)
+	}
+
+	var state updater.State
+	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != updater.StatusIdle {
+		t.Fatalf("expected initial status idle, got %s", state.Status)
+	}
+
+	// 2. Configure updater on server
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubHex := crypto.PublicKeyToHex(pub)
+
+	bs, err := storage.NewBlockStore(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	targetExe := filepath.Join(tmpDir, "current-resonamesh.exe")
+	if err := os.WriteFile(targetExe, []byte("V1_BINARY"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	eng, err := updater.NewEngine(updater.Config{
+		CurrentVersion: "0.1.0-alpha",
+		ExecutablePath: targetExe,
+		ReleasePubKey:  pubHex,
+		DataDir:        tmpDir,
+		BlockStore:     bs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.SetUpdater(eng)
+
+	// 3. Status with engine attached
+	resp, err = http.Get(ts.URL + "/api/v1/updater/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	_ = json.NewDecoder(resp.Body).Decode(&state)
+	if state.CurrentVersion != "0.1.0-alpha" {
+		t.Fatalf("expected 0.1.0-alpha, got %s", state.CurrentVersion)
+	}
+
+	// 4. Download before release available returns 400 Bad Request
+	dlResp, err := http.Post(ts.URL+"/api/v1/updater/download", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dlResp.Body.Close()
+	if dlResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request when downloading with no available release, got %d", dlResp.StatusCode)
+	}
+
+	// 5. Create valid release binary and manifest
+	sourceBin := filepath.Join(tmpDir, "source-v0.2.0.exe")
+	if err := os.WriteFile(sourceBin, []byte("V2_NEW_BINARY_DATA"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, err := eng.CreateRelease(sourceBin, "0.2.0", "New release notes", priv)
+	if err != nil {
+		t.Fatalf("CreateRelease failed: %v", err)
+	}
+
+	// Announce release to client engine
+	accepted, err := eng.ProcessAnnouncedRelease(manifest)
+	if err != nil || !accepted {
+		t.Fatalf("ProcessAnnouncedRelease failed: %v (accepted=%v)", err, accepted)
+	}
+
+	// 6. Status now available
+	resp, err = http.Get(ts.URL + "/api/v1/updater/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	_ = json.NewDecoder(resp.Body).Decode(&state)
+	if state.Status != updater.StatusAvailable {
+		t.Fatalf("expected available status, got %s", state.Status)
+	}
+
+	// 7. Synchronously download release
+	if err := eng.DownloadRelease(context.Background()); err != nil {
+		t.Fatalf("DownloadRelease failed: %v", err)
+	}
+
+	// 8. Apply update via POST /api/v1/updater/apply
+	applyResp, err := http.Post(ts.URL+"/api/v1/updater/apply", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer applyResp.Body.Close()
+	if applyResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for apply, got %d", applyResp.StatusCode)
+	}
+
+	var applyResult struct {
+		Status          string `json:"status"`
+		RestartRequired bool   `json:"restart_required"`
+	}
+	_ = json.NewDecoder(applyResp.Body).Decode(&applyResult)
+	if !applyResult.RestartRequired || applyResult.Status != "applied" {
+		t.Fatalf("unexpected apply result: %+v", applyResult)
+	}
+
+	// 9. Verify target binary replaced with new content
+	newContent, err := os.ReadFile(targetExe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(newContent) != "V2_NEW_BINARY_DATA" {
+		t.Fatalf("expected new binary data, got: %s", string(newContent))
+	}
+
+	// 10. Rollback via POST /api/v1/updater/rollback
+	rbResp, err := http.Post(ts.URL+"/api/v1/updater/rollback", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rbResp.Body.Close()
+	if rbResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for rollback, got %d", rbResp.StatusCode)
+	}
+
+	restoredContent, err := os.ReadFile(targetExe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restoredContent) != "V1_BINARY" {
+		t.Fatalf("expected restored initial binary, got: %s", string(restoredContent))
+	}
+}
+
+func TestTrackLyricsEndpoint(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	audioData := bytes.Repeat([]byte{0x42}, 128*1024)
+	initialLyrics := "[00:01.00] Echoes in the dark\n[00:05.50] Resonating pulse"
+
+	// 1. Import track with initial lyrics
+	var reqBody bytes.Buffer
+	writer := multipart.NewWriter(&reqBody)
+	_ = writer.WriteField("title", "Neon Echoes")
+	_ = writer.WriteField("artist", "Synth Swarm")
+	_ = writer.WriteField("lyrics", initialLyrics)
+	_ = writer.WriteField("license", protocol.LicenseCCBY40)
+
+	part, err := writer.CreateFormFile("audio_file", "neon.mp3")
+	if err != nil {
+		t.Fatalf("failed to create form file: %v", err)
+	}
+	if _, err := part.Write(audioData); err != nil {
+		t.Fatalf("failed to write multipart audio: %v", err)
+	}
+	_ = writer.Close()
+
+	uploadResp, err := http.Post(ts.URL+"/api/v1/tracks/import", writer.FormDataContentType(), &reqBody)
+	if err != nil {
+		t.Fatalf("failed POST /api/v1/tracks/import: %v", err)
+	}
+	defer uploadResp.Body.Close()
+
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d", uploadResp.StatusCode)
+	}
+
+	var importResult struct {
+		Manifest protocol.Manifest `json:"manifest"`
+		Track    catalog.Track     `json:"track"`
+	}
+	if err := json.NewDecoder(uploadResp.Body).Decode(&importResult); err != nil {
+		t.Fatalf("failed to decode import response: %v", err)
+	}
+
+	contentID := importResult.Manifest.ContentID
+	if contentID == "" {
+		t.Fatal("content_id is empty")
+	}
+	if importResult.Track.Lyrics != initialLyrics {
+		t.Fatalf("expected initial lyrics %q, got %q", initialLyrics, importResult.Track.Lyrics)
+	}
+
+	// 2. GET /api/v1/tracks/{id}
+	getResp, err := http.Get(fmt.Sprintf("%s/api/v1/tracks/%s", ts.URL, contentID))
+	if err != nil {
+		t.Fatalf("failed GET track: %v", err)
+	}
+	defer getResp.Body.Close()
+	var trackResp catalog.Track
+	if err := json.NewDecoder(getResp.Body).Decode(&trackResp); err != nil {
+		t.Fatalf("failed to decode track response: %v", err)
+	}
+	if trackResp.Lyrics != initialLyrics {
+		t.Fatalf("expected track lyrics %q, got %q", initialLyrics, trackResp.Lyrics)
+	}
+
+	// 3. GET /api/v1/tracks/{id}/manifest
+	manifestResp, err := http.Get(fmt.Sprintf("%s/api/v1/tracks/%s/manifest", ts.URL, contentID))
+	if err != nil {
+		t.Fatalf("failed GET manifest: %v", err)
+	}
+	defer manifestResp.Body.Close()
+	var manifestRespData protocol.Manifest
+	if err := json.NewDecoder(manifestResp.Body).Decode(&manifestRespData); err != nil {
+		t.Fatalf("failed to decode manifest: %v", err)
+	}
+	if manifestRespData.Lyrics != initialLyrics {
+		t.Fatalf("expected manifest lyrics %q, got %q", initialLyrics, manifestRespData.Lyrics)
+	}
+
+	// 4. Update lyrics via PUT /api/v1/tracks/{id}/lyrics
+	updatedLyrics := "[00:02.00] New lyric verse\n[00:08.00] High fidelity karaoke"
+	putPayload, _ := json.Marshal(map[string]string{"lyrics": updatedLyrics})
+	client := &http.Client{}
+
+	putReq, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/tracks/%s/lyrics", ts.URL, contentID), bytes.NewReader(putPayload))
+	if err != nil {
+		t.Fatalf("failed to create PUT request: %v", err)
+	}
+	putReq.Header.Set("Content-Type", "application/json")
+
+	putResp, err := client.Do(putReq)
+	if err != nil {
+		t.Fatalf("failed PUT lyrics: %v", err)
+	}
+	defer putResp.Body.Close()
+
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for lyrics update, got %d", putResp.StatusCode)
+	}
+
+	var putResult struct {
+		Status    string `json:"status"`
+		ContentID string `json:"content_id"`
+		Lyrics    string `json:"lyrics"`
+	}
+	if err := json.NewDecoder(putResp.Body).Decode(&putResult); err != nil {
+		t.Fatalf("failed to decode put result: %v", err)
+	}
+	if putResult.Lyrics != updatedLyrics || putResult.Status != "updated" {
+		t.Fatalf("unexpected put response: %+v", putResult)
+	}
+
+	// 5. Verify GET /api/v1/tracks/{id} reflects updated lyrics
+	getUpdatedResp, err := http.Get(fmt.Sprintf("%s/api/v1/tracks/%s", ts.URL, contentID))
+	if err != nil {
+		t.Fatalf("failed GET track after update: %v", err)
+	}
+	defer getUpdatedResp.Body.Close()
+	var updatedTrackResp catalog.Track
+	_ = json.NewDecoder(getUpdatedResp.Body).Decode(&updatedTrackResp)
+	if updatedTrackResp.Lyrics != updatedLyrics {
+		t.Fatalf("expected updated lyrics %q, got %q", updatedLyrics, updatedTrackResp.Lyrics)
+	}
+
+	// 6. Test 404 on non-existent track
+	badReq, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/tracks/%s/lyrics", ts.URL, "nonexistent-id"), bytes.NewReader(putPayload))
+	badReq.Header.Set("Content-Type", "application/json")
+	badResp, err := client.Do(badReq)
+	if err != nil {
+		t.Fatalf("failed bad PUT request: %v", err)
+	}
+	defer badResp.Body.Close()
+	if badResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found, got %d", badResp.StatusCode)
+	}
+}
+
+
+func TestTrackMetadataAndRecommendationsEndpoints(t *testing.T) {
+	ts, _, _ := setupTestServer(t)
+	defer ts.Close()
+
+	// 1. Import Track A with initial metadata
+	var reqBodyA bytes.Buffer
+	writerA := multipart.NewWriter(&reqBodyA)
+	_ = writerA.WriteField("title", "Nordic Horizon")
+	_ = writerA.WriteField("artist", "Arctic Sound")
+	_ = writerA.WriteField("license", protocol.LicenseCC0)
+	_ = writerA.WriteField("genre", "Ambient")
+	_ = writerA.WriteField("bpm", "85")
+	_ = writerA.WriteField("mood", "Peaceful")
+	_ = writerA.WriteField("tags", "nordic,cold,drone")
+	partA, _ := writerA.CreateFormFile("audio_file", "horizon.mp3")
+	_, _ = partA.Write([]byte("audio bytes A 1234567890"))
+	_ = writerA.Close()
+
+	respA, err := http.Post(ts.URL+"/api/v1/tracks/import", writerA.FormDataContentType(), &reqBodyA)
+	if err != nil {
+		t.Fatalf("import track A failed: %v", err)
+	}
+	defer respA.Body.Close()
+	var resA struct {
+		Track catalog.Track `json:"track"`
+	}
+	_ = json.NewDecoder(respA.Body).Decode(&resA)
+	idA := resA.Track.ContentID
+	if resA.Track.Genre != "Ambient" || resA.Track.BPM != 85 || len(resA.Track.Tags) != 3 {
+		t.Fatalf("unexpected imported metadata for A: %+v", resA.Track)
+	}
+
+	// 2. Import Track B (Similar: Ambient, 88 BPM, tags nordic,drone)
+	var reqBodyB bytes.Buffer
+	writerB := multipart.NewWriter(&reqBodyB)
+	_ = writerB.WriteField("title", "Glacier Whispers")
+	_ = writerB.WriteField("artist", "Arctic Sound")
+	_ = writerB.WriteField("license", protocol.LicenseCC0)
+	_ = writerB.WriteField("genre", "Ambient")
+	_ = writerB.WriteField("bpm", "88")
+	_ = writerB.WriteField("mood", "Peaceful")
+	_ = writerB.WriteField("tags", "nordic,drone")
+	partB, _ := writerB.CreateFormFile("audio_file", "whispers.mp3")
+	_, _ = partB.Write([]byte("audio bytes B 1234567890"))
+	_ = writerB.Close()
+
+	respB, err := http.Post(ts.URL+"/api/v1/tracks/import", writerB.FormDataContentType(), &reqBodyB)
+	if err != nil {
+		t.Fatalf("import track B failed: %v", err)
+	}
+	defer respB.Body.Close()
+	var resB struct {
+		Track catalog.Track `json:"track"`
+	}
+	_ = json.NewDecoder(respB.Body).Decode(&resB)
+	idB := resB.Track.ContentID
+
+	// 3. Test GET /api/v1/tracks/{id}/recommendations for Track A
+	recResp, err := http.Get(fmt.Sprintf("%s/api/v1/tracks/%s/recommendations?limit=5", ts.URL, idA))
+	if err != nil {
+		t.Fatalf("GET recommendations failed: %v", err)
+	}
+	defer recResp.Body.Close()
+	if recResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", recResp.StatusCode)
+	}
+	var recData struct {
+		ContentID       string                        `json:"content_id"`
+		Recommendations []catalog.TrackRecommendation `json:"recommendations"`
+	}
+	if err := json.NewDecoder(recResp.Body).Decode(&recData); err != nil {
+		t.Fatalf("decode recommendations failed: %v", err)
+	}
+	if len(recData.Recommendations) != 1 || recData.Recommendations[0].Track.ContentID != idB {
+		t.Fatalf("expected track B as recommendation, got: %+v", recData.Recommendations)
+	}
+	if recData.Recommendations[0].Score <= 0 {
+		t.Fatalf("expected positive similarity score, got %f", recData.Recommendations[0].Score)
+	}
+
+	// 4. Test PUT /api/v1/tracks/{id}/metadata
+	updatePayload, _ := json.Marshal(map[string]interface{}{
+		"genre": "Neo-Classical",
+		"tags":  []string{"piano", "acoustic", "nordic"},
+		"bpm":   90,
+		"mood":  "Nostalgic",
+	})
+	putReq, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/tracks/%s/metadata", ts.URL, idA), bytes.NewReader(updatePayload))
+	putReq.Header.Set("Content-Type", "application/json")
+	putResp, err := http.DefaultClient.Do(putReq)
+	if err != nil {
+		t.Fatalf("PUT metadata failed: %v", err)
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for PUT metadata, got %d", putResp.StatusCode)
+	}
+
+	var updateRes struct {
+		Status string        `json:"status"`
+		Track  catalog.Track `json:"track"`
+	}
+	if err := json.NewDecoder(putResp.Body).Decode(&updateRes); err != nil {
+		t.Fatalf("decode update result failed: %v", err)
+	}
+	if updateRes.Track.Genre != "Neo-Classical" || updateRes.Track.BPM != 90 || updateRes.Track.Mood != "Nostalgic" {
+		t.Fatalf("unexpected updated track metadata: %+v", updateRes.Track)
+	}
+	if len(updateRes.Track.Tags) != 3 || updateRes.Track.Tags[0] != "piano" {
+		t.Fatalf("unexpected updated tags: %+v", updateRes.Track.Tags)
+	}
+}
+
+
+func generateTestAPIPeerID(t *testing.T) peer.ID {
+	t.Helper()
+	pub, _, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lp2pPub, err := libp2pcrypto.UnmarshalEd25519PublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := peer.IDFromPublicKey(lp2pPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pid
+}
+
+func TestServerPeerReputationEndpoints(t *testing.T) {
+	server, _ := createTestAPIServer(t)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	peerTracker := p2p.NewPeerTracker()
+	repTracker := p2p.NewPeerReputationTracker()
+	server.SetPeerTracker(peerTracker)
+	server.SetReputationTracker(repTracker)
+
+	// Record valid peer IDs in peerTracker
+	peerIDA := generateTestAPIPeerID(t)
+	peerIDB := generateTestAPIPeerID(t)
+
+	peerTracker.RecordPeer(peer.AddrInfo{
+		ID: peerIDA,
+	}, true)
+	peerTracker.RecordPeer(peer.AddrInfo{
+		ID: peerIDB,
+	}, true)
+
+	// Peer A has 5 verified blocks and 40ms latency
+	for i := 0; i < 5; i++ {
+		repTracker.RecordSuccess(peerIDA, 40*time.Millisecond, 256*1024)
+	}
+
+	// Peer B committed a hash mismatch -> quarantined
+	repTracker.RecordFailure(peerIDB, p2p.FailureHashMismatch)
+
+	// 1. Query /api/v1/peers
+	resp, err := http.Get(ts.URL + "/api/v1/peers")
+	if err != nil {
+		t.Fatalf("GET /api/v1/peers failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+	}
+
+	var peerData struct {
+		Peers []api.EnrichedPeerRecord `json:"peers"`
+		Total int                      `json:"total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&peerData); err != nil {
+		t.Fatalf("failed to decode peers JSON: %v", err)
+	}
+
+	if peerData.Total != 2 {
+		t.Fatalf("expected 2 peers, got %d", peerData.Total)
+	}
+
+	for _, p := range peerData.Peers {
+		if p.ID == peerIDA {
+			if p.Score <= 100.0 {
+				t.Fatalf("expected Peer A score > 100, got %f", p.Score)
+			}
+			if p.BlocksVerified != 5 {
+				t.Fatalf("expected 5 verified blocks for Peer A, got %d", p.BlocksVerified)
+			}
+			if p.IsQuarantined {
+				t.Fatalf("Peer A should not be quarantined")
+			}
+		}
+		if p.ID == peerIDB {
+			if !p.IsQuarantined {
+				t.Fatalf("Peer B must be quarantined")
+			}
+			if p.HashMismatches != 1 {
+				t.Fatalf("expected 1 hash mismatch for Peer B, got %d", p.HashMismatches)
+			}
+		}
+	}
+
+	// 2. Query /api/v1/network/reputation
+	repResp, err := http.Get(ts.URL + "/api/v1/network/reputation")
+	if err != nil {
+		t.Fatalf("GET /api/v1/network/reputation failed: %v", err)
+	}
+	defer repResp.Body.Close()
+
+	if repResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for reputation endpoint, got %d", repResp.StatusCode)
+	}
+
+	var repData struct {
+		Peers []map[string]interface{} `json:"peers"`
+		Total int                      `json:"total"`
+	}
+	if err := json.NewDecoder(repResp.Body).Decode(&repData); err != nil {
+		t.Fatalf("failed to decode reputation JSON: %v", err)
+	}
+
+	if repData.Total != 2 {
+		t.Fatalf("expected 2 tracked peers in reputation list, got %d", repData.Total)
+	}
+}

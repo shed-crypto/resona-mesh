@@ -10,6 +10,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -23,12 +26,13 @@ import (
 	"resonamesh/internal/p2p"
 	"resonamesh/internal/player"
 	"resonamesh/internal/storage"
+	"resonamesh/internal/updater"
 	"resonamesh/pkg/crypto"
 	"resonamesh/pkg/protocol"
 	"resonamesh/web"
 )
 
-const AppVersion = "0.1.0-alpha"
+var AppVersion = "0.1.0-alpha"
 
 // Syncer coordinates manifest synchronization with connected swarm peers.
 type Syncer interface {
@@ -47,7 +51,11 @@ type Server struct {
 	p2pHost          *p2p.Host
 	moderationEngine *moderation.Engine
 	moderatorKey     ed25519.PrivateKey
+	updaterEngine    *updater.Engine
+	releaseHandler   *p2p.ReleaseHandler
+	reputationTracker *p2p.PeerReputationTracker
 	publisherKey     ed25519.PrivateKey
+	appVersion       string
 	startTime        time.Time
 	mux              *http.ServeMux
 	handler          http.Handler
@@ -132,13 +140,48 @@ func (s *Server) SetModerationEngine(eng *moderation.Engine, modKey ed25519.Priv
 	s.moderatorKey = modKey
 }
 
+// SetUpdater binds the auto-updater engine for client upgrade management.
+func (s *Server) SetUpdater(u *updater.Engine) {
+	s.updaterEngine = u
+}
+
+// SetReleaseHandler binds the P2P release handler for swarm release propagation.
+func (s *Server) SetReleaseHandler(rh *p2p.ReleaseHandler) {
+	s.releaseHandler = rh
+}
+
+// SetReputationTracker binds the P2P peer reputation tracker.
+func (s *Server) SetReputationTracker(rt *p2p.PeerReputationTracker) {
+	s.reputationTracker = rt
+}
+
+// SetAppVersion sets the application version string.
+func (s *Server) SetAppVersion(v string) {
+	if v != "" {
+		s.appVersion = v
+	}
+}
+
+func (s *Server) effectiveVersion() string {
+	if s.appVersion != "" {
+		return s.appVersion
+	}
+	return AppVersion
+}
+
+
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/tracks", s.handleListTracks)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}", s.handleGetTrack)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}/manifest", s.handleGetManifest)
 	s.mux.HandleFunc("GET /api/v1/tracks/{id}/cover", s.handleGetTrackCover)
+	s.mux.HandleFunc("GET /api/v1/tracks/{id}/download", s.handleDownloadTrack)
+	s.mux.HandleFunc("HEAD /api/v1/tracks/{id}/download", s.handleDownloadTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/pin", s.handlePinTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/{id}/unpin", s.handleUnpinTrack)
+	s.mux.HandleFunc("PUT /api/v1/tracks/{id}/lyrics", s.handleUpdateTrackLyrics)
+	s.mux.HandleFunc("GET /api/v1/tracks/{id}/recommendations", s.handleTrackRecommendations)
+	s.mux.HandleFunc("PUT /api/v1/tracks/{id}/metadata", s.handleUpdateTrackMetadata)
 	s.mux.HandleFunc("DELETE /api/v1/tracks/{id}", s.handleDeleteTrack)
 	s.mux.HandleFunc("POST /api/v1/tracks/import", s.handleImportTrack)
 	s.mux.HandleFunc("GET /api/v1/stream/{id}", s.handleStream)
@@ -148,6 +191,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/peers", s.handleListPeers)
 	s.mux.HandleFunc("POST /api/v1/peers/connect", s.handleConnectPeer)
 	s.mux.HandleFunc("POST /api/v1/peers/sync", s.handleSyncPeers)
+	s.mux.HandleFunc("GET /api/v1/network/reputation", s.handleGetReputation)
 	s.mux.HandleFunc("GET /api/v1/storage", s.handleGetStorage)
 	s.mux.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	s.mux.HandleFunc("PUT /api/v1/settings", s.handleUpdateSettings)
@@ -158,6 +202,17 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/moderation/decisions", s.handleListDecisions)
 	s.mux.HandleFunc("POST /api/v1/moderation/decisions", s.handleCreateDecision)
 	s.mux.HandleFunc("GET /api/v1/moderation/blocked", s.handleListBlocked)
+	s.mux.HandleFunc("GET /api/v1/moderation/moderators", s.handleListModerators)
+	s.mux.HandleFunc("POST /api/v1/moderation/moderators", s.handleDelegateModerator)
+	s.mux.HandleFunc("POST /api/v1/moderation/key-rotations", s.handleApplyKeyRotation)
+	s.mux.HandleFunc("GET /api/v1/updater/status", s.handleUpdaterStatus)
+	s.mux.HandleFunc("POST /api/v1/updater/check", s.handleUpdaterCheck)
+	s.mux.HandleFunc("POST /api/v1/updater/download", s.handleUpdaterDownload)
+	s.mux.HandleFunc("POST /api/v1/updater/apply", s.handleUpdaterApply)
+	s.mux.HandleFunc("POST /api/v1/updater/rollback", s.handleUpdaterRollback)
+
+	s.mux.HandleFunc("POST /api/v1/identity/export", s.handleExportIdentity)
+	s.mux.HandleFunc("POST /api/v1/identity/import", s.handleImportIdentity)
 
 	if s.cfg.Headless {
 		s.mux.HandleFunc("GET /", s.handleHeadlessStatusPage)
@@ -361,6 +416,118 @@ func (s *Server) handleUnpinTrack(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleUpdateTrackLyrics updates synchronized lyrics for a track.
+func (s *Server) handleUpdateTrackLyrics(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "headless relay mode active: mutations are disabled")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	var req struct {
+		Lyrics string `json:"lyrics"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json request body: "+err.Error())
+		return
+	}
+
+	if err := s.catalog.UpdateTrackLyrics(r.Context(), id, req.Lyrics); err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to update track lyrics")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":     "updated",
+		"content_id": id,
+		"lyrics":     req.Lyrics,
+	})
+}
+
+
+
+// handleTrackRecommendations returns top recommended tracks for a given seed track.
+func (s *Server) handleTrackRecommendations(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	limit := 10
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	recs, err := s.catalog.GetRecommendations(r.Context(), id, limit)
+	if err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to get recommendations: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"content_id":      id,
+		"recommendations": recs,
+	})
+}
+
+// handleUpdateTrackMetadata updates genre, tags, bpm, and mood for an existing track.
+func (s *Server) handleUpdateTrackMetadata(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "headless relay mode active: mutations are disabled")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	var req struct {
+		Genre string   `json:"genre"`
+		Tags  []string `json:"tags"`
+		BPM   int      `json:"bpm"`
+		Mood  string   `json:"mood"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json request body: "+err.Error())
+		return
+	}
+
+	if err := s.catalog.UpdateTrackMetadata(r.Context(), id, req.Genre, req.Tags, req.BPM, req.Mood); err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to update track metadata: "+err.Error())
+		return
+	}
+
+	updated, err := s.catalog.GetTrack(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to load updated track")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "updated",
+		"track":  updated,
+	})
+}
 // handleDeleteTrack removes a track from the catalog.
 func (s *Server) handleDeleteTrack(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.Headless {
@@ -412,6 +579,27 @@ func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(r.FormValue("title"))
 	artist := strings.TrimSpace(r.FormValue("artist"))
 	description := strings.TrimSpace(r.FormValue("description"))
+	lyrics := strings.TrimSpace(r.FormValue("lyrics"))
+	genre := strings.TrimSpace(r.FormValue("genre"))
+	mood := strings.TrimSpace(r.FormValue("mood"))
+	bpm := 0
+	if b := r.FormValue("bpm"); b != "" {
+		if parsed, err := strconv.Atoi(b); err == nil && parsed >= 0 {
+			bpm = parsed
+		}
+	}
+	var tags []string
+	if rawTags := r.FormValue("tags"); rawTags != "" {
+		if strings.HasPrefix(strings.TrimSpace(rawTags), "[") {
+			_ = json.Unmarshal([]byte(rawTags), &tags)
+		} else {
+			for _, part := range strings.Split(rawTags, ",") {
+				if t := strings.TrimSpace(part); t != "" {
+					tags = append(tags, t)
+				}
+			}
+		}
+	}
 	licenseCode := strings.TrimSpace(r.FormValue("license"))
 	if licenseCode == "" {
 		licenseCode = protocol.LicenseCCBY40
@@ -450,6 +638,11 @@ func (s *Server) handleImportTrack(w http.ResponseWriter, r *http.Request) {
 		Title:        title,
 		Artist:       artist,
 		Description:  description,
+		Lyrics:       lyrics,
+		Genre:        genre,
+		Tags:         tags,
+		BPM:          bpm,
+		Mood:         mood,
 		DurationMs:   durationMs,
 		BitrateKbps:  bitrateKbps,
 		LicenseCode:  licenseCode,
@@ -498,20 +691,170 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	s.streamer.StreamTrack(w, r, id)
 }
 
-// handleListPeers returns active P2P swarm peers discovered or connected.
+// handleDownloadTrack streams the complete audio track with Content-Disposition attachment header for direct file export.
+func (s *Server) handleDownloadTrack(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		slog.Warn("Track download request missing track id", "url", r.URL.String())
+		writeJSONError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	track, err := s.catalog.GetTrack(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, catalog.ErrTrackNotFound) {
+			writeJSONError(w, http.StatusNotFound, "track not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to get track")
+		return
+	}
+
+	var filename string
+	artist := strings.TrimSpace(track.Artist)
+	title := strings.TrimSpace(track.Title)
+	if artist != "" && title != "" {
+		filename = fmt.Sprintf("%s - %s.mp3", artist, title)
+	} else if title != "" {
+		filename = fmt.Sprintf("%s.mp3", title)
+	} else if artist != "" {
+		filename = fmt.Sprintf("%s.mp3", artist)
+	} else {
+		filename = fmt.Sprintf("%s.mp3", id)
+	}
+	filename = SanitizeFilename(filename)
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q; filename*=UTF-8''%s", filename, url.PathEscape(filename)))
+	s.streamer.StreamTrack(w, r, id)
+}
+
+// SanitizeFilename cleans audio track file names for safe Content-Disposition headers.
+func SanitizeFilename(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch r {
+		case '\\', '/', ':', '*', '?', '"', '<', '>', '|':
+			b.WriteRune('_')
+		default:
+			if r < 32 {
+				b.WriteRune('_')
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	cleaned := strings.TrimSpace(b.String())
+	if cleaned == "" || cleaned == ".mp3" {
+		return "track.mp3"
+	}
+	return cleaned
+}
+
+// EnrichedPeerRecord wraps runtime peer discovery state with empirical reputation metrics and transport classification.
+type EnrichedPeerRecord struct {
+	p2p.PeerRecord
+	ConnectionType   string  `json:"connection_type"`
+	Score            float64 `json:"reputation_score"`
+	BlocksVerified   int64   `json:"blocks_verified"`
+	HashMismatches   int64   `json:"hash_mismatches"`
+	StreamErrors     int64   `json:"stream_errors"`
+	AvgLatencyMs     float64 `json:"avg_latency_ms"`
+	IsQuarantined    bool    `json:"is_quarantined"`
+	QuarantinedUntil string  `json:"quarantined_until,omitempty"`
+}
+
+// handleListPeers returns active P2P swarm peers discovered or connected, enriched with reputation state.
 func (s *Server) handleListPeers(w http.ResponseWriter, r *http.Request) {
 	if s.peerTracker == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"peers": []p2p.PeerRecord{},
+			"peers":       []EnrichedPeerRecord{},
+			"total":       0,
+			"cache_limit": p2p.MaxTrackedPeers,
+		})
+		return
+	}
+
+	rawPeers := s.peerTracker.Peers()
+	now := time.Now()
+	enriched := make([]EnrichedPeerRecord, 0, len(rawPeers))
+	for _, p := range rawPeers {
+		connType := "known"
+		if p.Connected {
+			if s.p2pHost != nil {
+				if s.p2pHost.HasDirectConnection(p.ID) {
+					connType = "direct"
+				} else {
+					connType = "relayed"
+				}
+			} else {
+				connType = "direct"
+				for _, addr := range p.Addrs {
+					if strings.Contains(addr, "p2p-circuit") {
+						connType = "relayed"
+						break
+					}
+				}
+			}
+		}
+
+		ep := EnrichedPeerRecord{
+			PeerRecord:     p,
+			ConnectionType: connType,
+			Score:          100.0,
+		}
+		if s.reputationTracker != nil {
+			ep.Score = s.reputationTracker.Score(p.ID)
+			ep.IsQuarantined = s.reputationTracker.IsQuarantined(p.ID, now)
+			if stats, ok := s.reputationTracker.GetStats(p.ID); ok {
+				ep.BlocksVerified = stats.BlocksVerified
+				ep.HashMismatches = stats.HashMismatchCount
+				ep.StreamErrors = stats.StreamErrors
+				ep.AvgLatencyMs = stats.AvgLatencyMs
+				if ep.IsQuarantined {
+					ep.QuarantinedUntil = stats.QuarantinedUntil.Format(time.RFC3339)
+				}
+			}
+		}
+		enriched = append(enriched, ep)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"peers":       enriched,
+		"total":       len(enriched),
+		"cache_limit": p2p.MaxTrackedPeers,
+	})
+}
+
+// handleGetReputation returns reputation and quarantine telemetry across all peers.
+func (s *Server) handleGetReputation(w http.ResponseWriter, r *http.Request) {
+	if s.reputationTracker == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"peers": []interface{}{},
 			"total": 0,
 		})
 		return
 	}
 
-	peers := s.peerTracker.Peers()
+	stats := s.reputationTracker.AllStats()
+	now := time.Now()
+	type peerRepEntry struct {
+		p2p.PeerTransferStats
+		Score         float64 `json:"score"`
+		IsQuarantined bool    `json:"is_quarantined"`
+	}
+
+	entries := make([]peerRepEntry, 0, len(stats))
+	for _, st := range stats {
+		entries = append(entries, peerRepEntry{
+			PeerTransferStats: st,
+			Score:             s.reputationTracker.Score(st.PeerID),
+			IsQuarantined:     s.reputationTracker.IsQuarantined(st.PeerID, now),
+		})
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"peers": peers,
-		"total": len(peers),
+		"peers": entries,
+		"total": len(entries),
 	})
 }
 
@@ -597,7 +940,7 @@ func (s *Server) handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"version":             AppVersion,
+		"version":             s.effectiveVersion(),
 		"publisher_key":       pubKeyHex,
 		"data_dir":            s.cfg.DataDir,
 		"storage_quota_bytes": s.cfg.StorageQuotaBytes,
@@ -697,11 +1040,28 @@ func (s *Server) handleGetStorage(w http.ResponseWriter, r *http.Request) {
 
 // handleGetSettings returns configurable node daemon parameters.
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	pubKey := s.publisherKey.Public().(ed25519.PublicKey)
+	pubKeyHex := crypto.PublicKeyToHex(pubKey)
+
+	var wanAddr string
+	if s.p2pHost != nil {
+		p2pPeerID := s.p2pHost.ID().String()
+		for _, ma := range s.p2pHost.Addrs() {
+			mStr := ma.String()
+			if !strings.Contains(mStr, "/127.0.0.1") && !strings.Contains(mStr, "/169.254.") && !strings.Contains(mStr, "::1") {
+				wanAddr = fmt.Sprintf("%s/p2p/%s", mStr, p2pPeerID)
+				break
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"storage_quota_bytes": s.cfg.StorageQuotaBytes,
 		"keeper_enabled":      s.cfg.KeeperEnabled,
 		"p2p_port":            s.cfg.P2PPort,
 		"http_addr":           s.cfg.HTTPAddr,
+		"publisher_key":       pubKeyHex,
+		"wan_address":         wanAddr,
 	})
 }
 
@@ -721,8 +1081,8 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.StorageQuotaBytes != nil {
-		if *req.StorageQuotaBytes <= 0 {
-			writeJSONError(w, http.StatusBadRequest, "storage quota must be greater than zero")
+		if *req.StorageQuotaBytes < 0 {
+			writeJSONError(w, http.StatusBadRequest, "storage quota cannot be negative")
 			return
 		}
 		s.cfg.StorageQuotaBytes = *req.StorageQuotaBytes
@@ -948,6 +1308,187 @@ func (s *Server) handleListBlocked(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"items": blocked,
 		"total": len(blocked),
+	})
+}
+
+type ExportIdentityRequest struct {
+	Passphrase string `json:"passphrase"`
+}
+
+type ImportIdentityRequest struct {
+	Bundle     json.RawMessage `json:"bundle"`
+	Passphrase string          `json:"passphrase"`
+}
+
+type DelegateModeratorRequest struct {
+	Action          string `json:"action"` // "APPROVE_MODERATOR" or "REVOKE_MODERATOR"
+	ModeratorPubKey string `json:"moderator_pubkey"`
+	Alias           string `json:"alias"`
+	DurationSec     int64  `json:"duration_sec"`
+}
+
+// handleListModerators returns all active and historical moderator certificates.
+func (s *Server) handleListModerators(w http.ResponseWriter, r *http.Request) {
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	certs, err := s.moderationEngine.ListModeratorCertificates(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if certs == nil {
+		certs = []protocol.ModeratorCertificate{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items": certs,
+		"total": len(certs),
+	})
+}
+
+// handleDelegateModerator delegates or revokes moderator privileges.
+func (s *Server) handleDelegateModerator(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "moderator delegation is disabled in headless mode")
+		return
+	}
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	var req DelegateModeratorRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Action != "APPROVE_MODERATOR" && req.Action != "REVOKE_MODERATOR" {
+		writeJSONError(w, http.StatusBadRequest, "action must be APPROVE_MODERATOR or REVOKE_MODERATOR")
+		return
+	}
+	if req.ModeratorPubKey == "" {
+		writeJSONError(w, http.StatusBadRequest, "moderator_pubkey is required")
+		return
+	}
+
+	cert, err := s.moderationEngine.DelegateModerator(r.Context(), req.Action, req.ModeratorPubKey, req.Alias, req.DurationSec)
+	if err != nil {
+		if errors.Is(err, moderation.ErrUntrustedModerator) {
+			writeJSONError(w, http.StatusForbidden, "node is not configured with root admin credentials")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, cert)
+}
+
+// handleApplyKeyRotation verifies and records a root admin or release key rotation.
+func (s *Server) handleApplyKeyRotation(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "key rotation submission is disabled in headless mode")
+		return
+	}
+	if s.moderationEngine == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "moderation engine not initialized")
+		return
+	}
+
+	var evt protocol.KeyRotationEvent
+	if err := json.NewDecoder(r.Body).Decode(&evt); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid key rotation event json")
+		return
+	}
+
+	if err := s.moderationEngine.ApplyKeyRotation(r.Context(), &evt); err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("failed to apply key rotation: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":   "applied",
+		"event_id": evt.EventID,
+	})
+}
+
+// handleExportIdentity exports the local node private key inside an encrypted PBKDF2+AES-GCM bundle.
+func (s *Server) handleExportIdentity(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "identity export is disabled in headless mode")
+		return
+	}
+	if s.publisherKey == nil {
+		writeJSONError(w, http.StatusInternalServerError, "node identity private key is unavailable")
+		return
+	}
+
+	var req ExportIdentityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Passphrase) < 8 {
+		writeJSONError(w, http.StatusBadRequest, "passphrase must be at least 8 characters")
+		return
+	}
+
+	bundle, err := crypto.ExportEncryptedKey(s.publisherKey, req.Passphrase)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to export encrypted key: %v", err))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(bundle)
+}
+
+// handleImportIdentity restores an identity key from an encrypted bundle, updating node_key.ed25519.
+func (s *Server) handleImportIdentity(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Headless {
+		writeJSONError(w, http.StatusForbidden, "identity import is disabled in headless mode")
+		return
+	}
+
+	var req ImportIdentityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Passphrase == "" {
+		writeJSONError(w, http.StatusBadRequest, "passphrase is required")
+		return
+	}
+
+	privKey, err := crypto.ImportEncryptedKey(req.Bundle, req.Passphrase)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid passphrase or corrupted key bundle: %v", err))
+		return
+	}
+
+	keyPath := filepath.Join(s.cfg.DataDir, "node_key.ed25519")
+	bakPath := filepath.Join(s.cfg.DataDir, "node_key.ed25519.bak")
+
+	// Backup current key if it exists
+	if oldData, err := os.ReadFile(keyPath); err == nil {
+		_ = os.WriteFile(bakPath, oldData, 0600)
+	}
+
+	// Atomically save imported private key
+	if err := crypto.SavePrivateKey(keyPath, privKey); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save imported key: %v", err))
+		return
+	}
+
+	pubKey := privKey.Public().(ed25519.PublicKey)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":           "imported",
+		"restart_required": true,
+		"public_key":       crypto.PublicKeyToHex(pubKey),
 	})
 }
 
@@ -1288,10 +1829,111 @@ func (s *Server) handleHeadlessStatusPage(w http.ResponseWriter, r *http.Request
         }
     </script>
 </body>
-</html>`, connectedPeers, totalTracks, AppVersion, wanMultiaddr, gistJSON, peerID)
+</html>`, connectedPeers, totalTracks, s.effectiveVersion(), wanMultiaddr, gistJSON, peerID)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(html))
 }
 
+
+
+// handleUpdaterStatus returns current updater telemetry, available releases, and download progress.
+func (s *Server) handleUpdaterStatus(w http.ResponseWriter, r *http.Request) {
+	if s.updaterEngine == nil {
+		writeJSON(w, http.StatusOK, updater.State{
+			Status:         updater.StatusIdle,
+			CurrentVersion: s.effectiveVersion(),
+		})
+		return
+	}
+
+	state := s.updaterEngine.State()
+	if s.releaseHandler != nil && state.Status == updater.StatusIdle {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			_, _ = s.releaseHandler.QueryAllPeers(ctx)
+		}()
+	}
+
+	writeJSON(w, http.StatusOK, state)
+}
+
+// handleUpdaterCheck queries connected swarm peers for newer release manifests.
+func (s *Server) handleUpdaterCheck(w http.ResponseWriter, r *http.Request) {
+	if s.releaseHandler != nil {
+		_, _ = s.releaseHandler.QueryAllPeers(r.Context())
+	}
+	if s.updaterEngine == nil {
+		writeJSON(w, http.StatusOK, updater.State{
+			Status:         updater.StatusIdle,
+			CurrentVersion: s.effectiveVersion(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.updaterEngine.State())
+}
+
+// handleUpdaterDownload triggers the download and verification of available release chunks.
+func (s *Server) handleUpdaterDownload(w http.ResponseWriter, r *http.Request) {
+	if s.updaterEngine == nil {
+		writeJSONError(w, http.StatusBadRequest, "updater not configured")
+		return
+	}
+
+	state := s.updaterEngine.State()
+	if state.Status != updater.StatusAvailable && state.Status != updater.StatusError {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("cannot download in status %s", state.Status))
+		return
+	}
+
+	// Trigger download in background context so HTTP call returns immediately with accepted status
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		if err := s.updaterEngine.DownloadRelease(ctx); err != nil {
+			slog.Error("Background release download failed", "error", err)
+		}
+	}()
+
+	writeJSON(w, http.StatusAccepted, s.updaterEngine.State())
+}
+
+// handleUpdaterApply executes the atomic binary replacement and signals restart requirement.
+func (s *Server) handleUpdaterApply(w http.ResponseWriter, r *http.Request) {
+	if s.updaterEngine == nil {
+		writeJSONError(w, http.StatusBadRequest, "updater not configured")
+		return
+	}
+
+	if err := s.updaterEngine.ApplyUpdate(); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to apply update: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":           "applied",
+		"restart_required": true,
+		"message":          "Update applied successfully. Please restart ResonaMesh to run the new version.",
+	})
+}
+
+// handleUpdaterRollback restores the previous executable backup.
+func (s *Server) handleUpdaterRollback(w http.ResponseWriter, r *http.Request) {
+	if s.updaterEngine == nil {
+		writeJSONError(w, http.StatusBadRequest, "updater not configured")
+		return
+	}
+
+	if err := s.updaterEngine.Rollback(); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("failed to rollback: %v", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":           "rolled_back",
+		"restart_required": true,
+		"message":          "Previous binary restored successfully.",
+	})
+}
