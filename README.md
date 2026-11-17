@@ -1,5 +1,11 @@
 # ResonaMesh
 
+[![CI](https://github.com/shed-crypto/resona-mesh/actions/workflows/ci.yml/badge.svg)](https://github.com/shed-crypto/resona-mesh/actions/workflows/ci.yml)
+![Go](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go&logoColor=white)
+![React](https://img.shields.io/badge/React-19_%2B_TypeScript-61DAFB?logo=react&logoColor=black)
+![libp2p](https://img.shields.io/badge/P2P-go--libp2p-blue)
+![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)
+
 **Decentralized P2P Audio Streaming Application with Local Autonomy**
 
 ResonaMesh is a peer-to-peer audio streaming and distribution platform engineered to operate reliably in local networks and fragmented environments without requiring an active global internet connection or centralized streaming servers. When WAN connectivity is available, the mesh automatically extends across NAT boundaries using STUN-resolved endpoints, UDP hole punching (DCUtR), and circuit relay fallback.
@@ -47,18 +53,18 @@ Developed as a Bachelor's Thesis in Software Engineering at the Faculty of Infor
 |  +-----------------------+  +-----------+-----------+  +-----------------------+  |
 |                                         |                                         |
 |  +-----------------------+              v              +-----------------------+  |
-|  | internal/moderation   |  +-------------------------+|   internal/importer   |  |
-|  | - Policy Engine       |  |      internal/p2p       ||  - MP3 Chunking       |  |
-|  | - Outbox / Receipts   |  |  - go-libp2p Host       ||  - Manifest Signing   |  |
-|  | - Decision Broadcast  |  |  - TCP + QUIC-v1 + WS   ||  - Cover Art Ingest   |  |
-|  +-----------------------+  |  - Noise Encryption      |+-----------------------+  |
-|                             |  - mDNS + PEX Discovery  |                          |
-|                             |  - STUN + DCUtR + Relay  |                          |
-|                             |  - Block Exchange Wire   |                          |
-|                             |  - Catalog Syncer        |                          |
-|                             |  - Keeper Replicator     |                          |
-|                             +------------+-------------+                          |
-+-----------------------------------------|-----------------------------------------+
+|  | internal/moderation   |  +-----------------------+  |   internal/importer   |  |
+|  |  - Policy Engine      |  |     internal/p2p      |  |  - MP3 Chunking       |  |
+|  |  - Outbox / Receipts  |  |  - go-libp2p Host     |  |  - Manifest Signing   |  |
+|  |  - Decision Broadcast |  |  - TCP + QUIC-v1 + WS |  |  - Cover Art Ingest   |  |
+|  +-----------------------+  |  - Noise Encryption   |  +-----------------------+  |
+|                             |  - mDNS + PEX         |                             |
+|                             |  - STUN + DCUtR Relay |                             |
+|                             |  - Block Exchange     |                             |
+|                             |  - Catalog Syncer     |                             |
+|                             |  - Keeper Replicator  |                             |
+|                             +-----------+-----------+                             |
++-----------------------------------------+-----------------------------------------+
                                           | libp2p (/resonamesh/*/1.0.0)
                                           v
                                 +-------------------+
